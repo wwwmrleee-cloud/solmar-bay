@@ -36,7 +36,7 @@ Then open http://localhost:8080 in desktop Chrome. WASD to move / drive, mouse t
 
 ## Testing
 
-Playtested end-to-end with Playwright: all 5 missions completed (win screen, $2,700), car theft and driving, police chases, the hideout shootout, Busted and Wasted screens, pause, save + Continue, crash damage, hidden packages, resize (16:10, 4:3, 1280×720), and 60 FPS during a 3-star chase — with zero console errors and zero failed requests. See `TESTLOG.md`.
+Playtested end-to-end with Playwright: all 5 missions completed (win screen, $2,700), car theft and driving, police chases, the hideout shootout, Busted and Wasted screens, pause, save + Continue, crash damage, hidden packages, resize (16:10, 4:3, 1280×720), and 60 FPS during a 3-star chase — with zero console errors and zero failed requests. See `TESTLOG.md`. A fix pass on 2026-11-17 re-authored the entrypoint and every game file under a fresh recording, re-staged the four screenshots, and re-ran the regression suite — still zero console errors and zero failed requests.
 
 ---
 

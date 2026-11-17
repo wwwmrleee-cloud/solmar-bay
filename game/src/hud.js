@@ -1,5 +1,7 @@
 // HUD: health, money, wanted stars, clock, mission objective, ammo, speed,
 // minimap (roads, player, police, mission marker), dialogue box, toasts.
+// The minimap draws the same road grid the world uses, so the yellow
+// waypoint marker always sits on a real street.
 import { WORLD, MISSIONS } from './config.js';
 import { PLACES } from './world.js';
 

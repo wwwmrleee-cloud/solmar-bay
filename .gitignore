@@ -1,1 +1,2 @@
 out/
+# Local build output (MAKEFUN_OUTPUT_DIR=out node main.ts) — never committed.

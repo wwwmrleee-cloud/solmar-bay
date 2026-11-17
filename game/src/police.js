@@ -1,5 +1,7 @@
 // Wanted level (0–5 stars) and police AI: patrol cars that chase and ram,
 // officers on foot who shoot and can bust the player.
+// Wanted is points under the hood (25 per star, 125 max), so a small crime
+// still moves the meter a little instead of jumping a whole star.
 import { WORLD } from './config.js';
 import { dist, hitBuilding, inWorld, addParticles, addToast, playerPos } from './world.js';
 import { sfx, setSiren } from './audio.js';

@@ -1,4 +1,6 @@
 // Seeded RNG (mulberry32) so ?shot= scenes and replays are deterministic.
+// One seed, one city: the staged scenes and any replay see the same
+// streets every time.
 export function makeRng(seed) {
   let a = seed >>> 0;
   return function next() {

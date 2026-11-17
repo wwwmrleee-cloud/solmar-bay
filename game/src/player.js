@@ -1,5 +1,7 @@
 // On-foot player: WASD movement, mouse aim, E to interact / enter cars,
 // Space or click to shoot (handled in combat.js), building collision.
+// Movement is checked axis by axis, so sliding along a building wall still
+// works when the other axis is blocked.
 import { PLAYER } from './config.js';
 import { hitBuilding, inWorld, dist, addToast, addWanted, PLACES } from './world.js';
 import { isDown, wasPressed } from './input.js';

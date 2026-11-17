@@ -1,4 +1,5 @@
 // Pedestrians: walk sidewalks, cross streets, flee from gunshots and cars.
+// A fleeing pedestrian runs away from the shot or the car, never toward it.
 import { V_ROADS, H_ROADS } from './config.js';
 import { hitBuilding, inWorld, dist } from './world.js';
 

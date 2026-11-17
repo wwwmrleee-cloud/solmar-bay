@@ -1,5 +1,7 @@
 // Cars: player driving physics (accel, steering, drift, collisions) and
 // traffic AI (follow roads, turn at intersections, slow for cars ahead).
+// Traffic cars drive the same road grid as the player, so a chase always
+// has somewhere to go.
 import { CAR, V_ROADS, H_ROADS, ROAD_W } from './config.js';
 import { hitBuilding, inWorld, dist, addParticles, addToast } from './world.js';
 import { isDown, wasPressed } from './input.js';

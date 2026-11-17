@@ -1,5 +1,7 @@
 // Synthesized WebAudio only — no audio files. Engine hum, siren, gunshot,
 // pickup chime, mission jingle, crash thud. M toggles mute.
+// Every sound is built at runtime from oscillators and noise bursts, so
+// there are no audio files to load, fail, or fetch.
 export function createAudio() {
   return { ctx: null, muted: false, engineOsc: null, engineGain: null, sirenOn: false, sirenNodes: null };
 }

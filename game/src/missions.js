@@ -1,5 +1,7 @@
 // Story missions: 5 missions with dialogue, waypoints, objectives and pay.
 // The state machine lives in state.missionState { phase, collected, spawned }.
+// Each mission is a small state machine of its own — phase, collected count,
+// spawned flag — advanced by reaching places and finishing dialogue.
 import { MISSIONS } from './config.js';
 import { dist, addToast, addWanted, PLACES } from './world.js';
 import { sfx } from './audio.js';

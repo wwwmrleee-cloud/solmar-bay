@@ -1,5 +1,7 @@
 // Keyboard + mouse input. Tracks held keys, pressed-this-frame edges, and mouse
 // position in screen space plus the world-space aim point (set by main.js).
+// Edges live for one frame only; main.js clears them at the end of each
+// frame, so a single key press can never fire twice.
 export function createInput() {
   return {
     keys: new Set(),

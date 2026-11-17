@@ -1,4 +1,6 @@
 // Canvas drawing: camera, city, cars, people, effects, and all screens.
+// Every screen — title, pause, Busted, Wasted, won — is drawn here, so the
+// whole game keeps one look.
 import { WORLD, ROAD_W, V_ROADS, H_ROADS, COLORS, MISSIONS } from './config.js';
 import { PLACES, dist } from './world.js';
 

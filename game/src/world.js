@@ -1,5 +1,7 @@
 // City generation (roads, buildings, props), collision helpers, world state,
 // and the per-frame step that wires every system together.
+// The step runs every system in one fixed order, so the whole world
+// advances together each frame.
 import { WORLD, ROAD_W, V_ROADS, H_ROADS, COLORS, PLAYER, MISSIONS, HIDDEN_PACKAGES } from './config.js';
 import { makeRng, pick, range, rangeInt } from './random.js';
 import { updatePlayer } from './player.js';

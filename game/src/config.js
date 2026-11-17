@@ -1,5 +1,7 @@
 // Solmar Bay — constants, city layout and mission definitions.
 // Original game: nothing here comes from any commercial game.
+// All tuning in one place: speeds, radii, payouts and the city grid, so a
+// balance change never means hunting through the systems.
 export const WORLD = { width: 3600, height: 2800 };
 export const ROAD_W = 96;
 export const BLOCK = 450; // road centre spacing

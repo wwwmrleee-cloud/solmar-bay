@@ -1,7 +1,8 @@
 // Staged screenshot scenes for ?shot=start|drive|chase|mission.
 // Each one plays the real rules forward from a fresh world with a simple
 // autopilot, so the frame is what a short game really looks like and the
-// same seed always gives the same frame.
+// same seed always gives the same frame. Staging never draws a mock: every
+// staged frame is one the game can genuinely reach by playing.
 import { STEP } from './config.js';
 import { PLACES, resetWorld, addWanted } from './world.js';
 import { SCREEN_TITLE, SCREEN_PLAY } from './render.js';

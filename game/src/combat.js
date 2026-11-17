@@ -1,5 +1,8 @@
 // Shooting: player pistol (mouse aim, click/Space), enemy fire, bullets,
 // muzzle flash, hit feedback, enemy health bars.
+// The pistol only fires on foot — a driving player cannot shoot — and a
+// bullet dies on the first building it hits, so there is no shooting
+// through walls.
 import { BULLET_SPEED } from './config.js';
 import { hitBuilding, dist, addParticles, addWanted, playerPos, nearestPoliceDist } from './world.js';
 import { isDown, wasPressed } from './input.js';

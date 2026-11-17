@@ -1,4 +1,6 @@
 // localStorage save / load: mission progress, money, position, wanted, stats.
+// The save carries a version number, so a future format can migrate an old
+// save instead of wiping the player's progress.
 import { SAVE_KEY } from './config.js';
 
 export function saveGame(state) {

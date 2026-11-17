@@ -1,4 +1,6 @@
 // Solmar Bay — game loop, screens, wiring. Entry point for game/index.html.
+// The loop advances the world in fixed STEP slices, so play speed does not
+// depend on the display's refresh rate.
 import { STEP, SAVE_KEY } from './config.js';
 import { createWorld, stepWorld, resetWorld } from './world.js';
 import { createInput, attachInput, endFrame, isDown, wasPressed } from './input.js';
