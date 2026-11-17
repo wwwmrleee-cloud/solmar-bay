@@ -1,6 +1,7 @@
-// A working gta6-01 entry (Node 22, standard library only): the game is this directory's
-// game/ folder, plain static files a desktop browser loads offline (game/index.html and its ES
-// modules, no library and no network request), and the program hands it in. It copies game/ and
+// Solmar Bay — an original open-world crime game for make.fun's gta6-01
+// "Make GTA 6" bounty ($1,666). The game is this directory's game/ folder,
+// plain static files a desktop browser loads offline (game/index.html and its
+// ES modules, no library and no network request), and the program hands it in. It copies game/ and
 // screenshots/ from beside this file to /output and writes /output/dossier.json, the summary the
 // judge reads, with the vendored make.fun library. Only the plumbing, not an open world: Block
 // Dodger, a plain 2D canvas game where a paddle dodges falling blocks and catches coins, with a
