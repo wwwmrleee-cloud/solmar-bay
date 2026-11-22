@@ -82,7 +82,6 @@ function continueGame() {
   state.upgrades = save.upgrades || [];
   state.bossesDown = save.bossesDown || 0;
   state.moneyEarned = save.moneyEarned || 0;
-  if (save.stats) state.stats = save.stats;
   resumeStory(state);
   addToastSafe(`Welcome back, Danny. Mission ${state.missionIndex + 1}/7.`);
 }

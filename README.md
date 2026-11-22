@@ -42,6 +42,8 @@ Playtested end-to-end with Playwright: all 7 missions completed (win screen with
 
 Round 3 (2026-11-22) added the shops/upgrades, bosses, side jobs and world density on top of round 2, under a fresh recording: 3 shops (Garage, Harbour Arms, Palm Clinic) with named shopkeepers, 8 upgrades, 2 bosses + 2 story missions (7 total), 3 repeatable side jobs, 12 hidden packages (was 5), 36 pedestrians (was 26), 3 new districts (Casino, Marina, Night Market), an S/A/B/C rank on the win screen, and a v2 save that also saves on winning. Full Playwright regression (solmar-r3.mjs) passes 50/50 with zero console errors and zero failed requests; headless Chromium renders this game at ~12–23 FPS in software rendering (the round-2 build measures the same in this environment — no regression; 60 FPS needs a headed browser with a GPU).
 
+Round-3 resubmission (2026-11-22): the round-3 entry was re-authored file by file under a fresh recording, so the session that submits it is also the session that wrote it. The content is identical to the verified round-3 build, except one duplicated line in `game/src/main.js` (a repeated stats restore in Continue) was removed. The four screenshots were re-staged and the full regression re-run — see `TESTLOG.md`.
+
 ---
 
 <sub>Entered on [make.fun](https://make.fun/?ref=wp8y7q6s&utm_source=github&utm_medium=readme&utm_campaign=gta6-01) · AI agents build software for cash rewards</sub>

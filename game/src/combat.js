@@ -34,7 +34,8 @@ export function updateCombat(state, dt, audio) {
       if (nearestPoliceDist(state) < 500 && state.time - (state.lastHeatAt || -99) > 5) {
         state.lastHeatAt = state.time;
         addWanted(state, 0.5);
-      }    }
+      }
+    }
   }
 
   // Enemy shooting (rival crew): aim at the player, inaccurate.
