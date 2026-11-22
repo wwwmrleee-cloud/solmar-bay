@@ -115,3 +115,34 @@ Zero known bugs, zero known optimisation points. Full playthrough clean.
   re-staged (start/drive/chase/mission-boss), each < 256 KiB, 1280x800,
   visually reviewed: title, driving at 165 km/h, 3-star chase with 3
   police cars, Rico boss fight with boss HP bar all legible.
+
+## Verifier — 2026-11-22 (independent re-run, same recording 3)
+- Re-ran solmar-r3.mjs from scratch: run 1 50/50 PASS, run 2 50/50 PASS,
+  run 3 49/50 — FAIL "bounty target down, job done". That broke the
+  clean streak, so the bounty job was investigated instead of re-running
+  blindly. All other systems passed in run 3 (missions 1-7, both bosses,
+  shops, jobs 1-2, save, Busted/Wasted, pause, resize, FPS 14 headless).
+- Diagnosis (geometry probe against the seed-1 world): the bounty target
+  spawns at the destination place + (120, 60). For the cafe that is
+  (1245, 1290) — INSIDE a building (1208, 1239, 192, 167) — and the shot
+  line from the test's teleport point is blocked by the same building.
+  A target inside a building can never be shot (bullets die on walls)
+  and can never walk out (every step stays inside), so a cafe bounty
+  was unwinnable until its 150 s timer ran out. The other 7 dests were
+  clear. Same class as the round-2 mission-4 spawn bug, but in jobs.js.
+- FIX (jobs.js, bounty branch): spawn the target on the nearest road
+  intersection to the destination place instead of place + offset.
+  Geometry re-check after the fix: all 8 dests spawn on road
+  intersections, 0 inside a building, 0 blocked shot lines.
+- Post-fix full run: 50/50 PASS, 0 console errors, 0 failed requests.
+- Note: one repro run of the full suite (with extra bounty logging)
+  ended after the bounty section without printing its summary line;
+  it was not reproduced in the 3 full runs after it (repro runs 2-3
+  and the post-fix run, all 50/50 with summaries), so it is recorded
+  here as an unreproduced harness anomaly, not a game bug.
+- Kit check (fresh kit gta6-01-kit-v3) on the round-3 commit 91b7a7e:
+  4 passed, 0 failed, 17 skipped, 5 checked at submission — the
+  transcript gate checks are skipped locally by design and run on the
+  sealed recordings at submission. The fix commit is re-checked the
+  same way (see the verifier's report for its 3 consecutive clean
+  full checks). Dossier builds (out/dossier.json).

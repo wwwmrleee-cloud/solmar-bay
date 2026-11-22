@@ -54,7 +54,13 @@ export function takeJob(state, audio) {
     addToast(state, `Delivery job: pick up at ${PLACES[from].label}, drop at ${PLACES[dest].label}.`);
   } else {
     const spot = pickDest(state, nearestPlaceKey(p.x, p.y));
-    const x = PLACES[spot].x + 120; const y = PLACES[spot].y + 60;
+    // Spawn on the nearest road intersection, never inside a city block:
+    // a target that starts inside a building can never be shot (bullets
+    // die on walls) and can never walk out (every step stays inside), so
+    // the job would be unwinnable until its timer runs out.
+    const rx = V_ROADS.reduce((a, b) => (Math.abs(b - PLACES[spot].x) < Math.abs(a - PLACES[spot].x) ? b : a));
+    const ry = H_ROADS.reduce((a, b) => (Math.abs(b - PLACES[spot].y) < Math.abs(a - PLACES[spot].y) ? b : a));
+    const x = rx; const y = ry;
     state.enemies.push({ x, y, hp: 120, shootCd: 2, color: '#8a2f8a', bounty: true });
     state.job = { type: 'bounty', phase: 'hunt', dest: spot, pay: 250, timer: 150, target: { x, y } };
     state.waypoint = { x, y, label: 'Bounty target' };
