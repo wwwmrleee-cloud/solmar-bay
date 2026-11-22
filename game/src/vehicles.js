@@ -7,6 +7,7 @@ import { hitBuilding, inWorld, dist, addParticles, addToast } from './world.js';
 import { isDown, wasPressed } from './input.js';
 import { sfx, updateEngine } from './audio.js';
 import { exitCar } from './player.js';
+import { carTopSpeed, carDamageFactor } from './upgrades.js';
 
 function carCollides(state, car, nx, ny) {
   if (!inWorld(nx, ny)) return true;
@@ -43,7 +44,7 @@ export function updateVehicles(state, dt, input, audio) {
     if (fwd) car.speed += CAR.accel * dt;
     else if (back) car.speed -= (car.speed > 0 ? CAR.brake : CAR.accel * 0.6) * dt;
     else car.speed -= Math.sign(car.speed) * Math.min(Math.abs(car.speed), 180 * dt);
-    car.speed = Math.max(-CAR.reverseMax, Math.min(CAR.maxSpeed, car.speed));
+    car.speed = Math.max(-CAR.reverseMax, Math.min(carTopSpeed(state), car.speed));
     const steer = (left ? -1 : 0) + (right ? 1 : 0);
     if (steer !== 0 && Math.abs(car.speed) > 20) {
       car.angle += steer * 2.1 * dt * Math.sign(car.speed) * Math.min(1, Math.abs(car.speed) / 150);
@@ -57,7 +58,7 @@ export function updateVehicles(state, dt, input, audio) {
     const ny = car.y + Math.sin(car.angle) * car.speed * dt;
     if (carCollides(state, car, nx, ny)) {
       if (Math.abs(car.speed) > 120) {
-        car.hp -= Math.abs(car.speed) * 0.08;
+        car.hp -= Math.abs(car.speed) * 0.08 * carDamageFactor(state);
         state.shake = Math.min(10, Math.abs(car.speed) * 0.02);
         addParticles(state, nx, ny, '#ffb347', 10, 200);
         addParticles(state, nx, ny, '#888888', 6, 90);

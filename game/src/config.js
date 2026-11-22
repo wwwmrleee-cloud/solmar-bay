@@ -79,7 +79,25 @@ export const MISSIONS = [
     ],
     pay: 1000,
   },
+  {
+    id: 6, name: "Rico's Last Stand",
+    brief: 'Rico, the rival crew leader, is holed up at the Hideout. Take him down — he fights back hard.',
+    dialogue: [
+      'Mara Solis: Rico is the one who sent the crew after us. He is at the hideout right now.',
+      'Mara Solis: He is big, he is armed, and he does not miss. Bring him down, Danny.',
+    ],
+    pay: 1200,
+  },
+  {
+    id: 7, name: 'Captain Voss',
+    brief: 'Captain Voss runs the whole police force — and he wants you gone. Beat him at the Harbour and escape.',
+    dialogue: [
+      'Mara Solis: Voss himself is coming to the harbour. He has half the force with him.',
+      'Mara Solis: Take Voss down, then run for the hideout. This is the last job, Danny.',
+    ],
+    pay: 1500,
+  },
 ];
 
-export const HIDDEN_PACKAGES = 5;
+export const HIDDEN_PACKAGES = 12;
 export const HIDDEN_PAY = 50;

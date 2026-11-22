@@ -11,6 +11,8 @@ import { createAudio, unlockAudio, setMuted, setSiren, updateEngine, sfx } from 
 import { saveGame, loadSave, hasSave, clearSave } from './save.js';
 import { startStory, resumeStory, advanceDialogue } from './missions.js';
 import { setShootHeld } from './combat.js';
+import { buyUpgrade, shopItems } from './upgrades.js';
+import { takeJob } from './jobs.js';
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -64,12 +66,25 @@ function continueGame() {
   state.player.hp = save.hp; state.player.ammo = save.ammo;
   state.wanted = save.wanted; state.wantedPts = save.wanted * 25;
   state.hiddenFound = save.hiddenFound || 0;
+  // Restore exactly which hidden packages were found, so the count and
+  // the map can never disagree after a Continue.
+  if (Array.isArray(save.hiddenFoundList)) {
+    for (const i of save.hiddenFoundList) {
+      if (state.hiddenPackages[i]) state.hiddenPackages[i].found = true;
+    }
+    state.hiddenFound = save.hiddenFoundList.length;
+  }
   state.packagesCollected = save.packagesCollected || 0;
   if (save.stats) state.stats = save.stats;
   if (save.clockMin) state.clockMin = save.clockMin;
   state.camera.x = save.x; state.camera.y = save.y;
+  // Round-3 progress: upgrades, bosses, money earned (v1 saves migrate empty).
+  state.upgrades = save.upgrades || [];
+  state.bossesDown = save.bossesDown || 0;
+  state.moneyEarned = save.moneyEarned || 0;
+  if (save.stats) state.stats = save.stats;
   resumeStory(state);
-  addToastSafe(`Welcome back, Danny. Mission ${state.missionIndex + 1}/5.`);
+  addToastSafe(`Welcome back, Danny. Mission ${state.missionIndex + 1}/7.`);
 }
 
 function addToastSafe(text) { state.toast = text; state.toastT = 4; }
@@ -129,11 +144,34 @@ function frame(now) {
         newGame();
       }
     } else if (state.screen === 'play') {
-      if (wasPressed(input, 'KeyP') || wasPressed(input, 'Escape')) {
+      if (state.shop && !state.dialogue) {
+        // Shop panel open: number keys buy, arrows move, E/Esc leaves.
+        const items = shopItems(state.shop.shopId);
+        let bought = null;
+        for (let i = 0; i < items.length; i += 1) {
+          if (wasPressed(input, `Digit${i + 1}`)) { bought = items[i].id; break; }
+        }
+        if (wasPressed(input, 'ArrowUp')) state.shop.sel = (state.shop.sel + items.length - 1) % items.length;
+        if (wasPressed(input, 'ArrowDown')) state.shop.sel = (state.shop.sel + 1) % items.length;
+        if (wasPressed(input, 'Enter') && items[state.shop.sel]) bought = items[state.shop.sel].id;
+        if (bought) {
+          const msg = buyUpgrade(state, bought);
+          addToastSafe(msg);
+          sfx.click(audio);
+          saveGame(state);
+        }
+        if (wasPressed(input, 'KeyE') || wasPressed(input, 'Escape') || wasPressed(input, 'KeyP')) {
+          state.shop = null;
+          sfx.click(audio);
+        }
+      } else if (wasPressed(input, 'KeyP') || wasPressed(input, 'Escape')) {
         state.screen = 'pause';
         sfx.click(audio);
       } else if (state.dialogue && (wasPressed(input, 'KeyE') || input.mousePressed)) {
         advanceDialogue(state, audio);
+      } else if (wasPressed(input, 'KeyJ')) {
+        const msg = takeJob(state, audio);
+        if (msg) addToastSafe(msg);
       } else {
         stepWorld(state, dt, input, audio);
       }
@@ -174,8 +212,8 @@ function frame(now) {
   }
 
   // Screen-reader status line.
-  if (state.screen === 'play' && state.missionIndex < 5) {
-    setStatus(`Mission ${state.missionIndex + 1} of 5. Money $${state.player.money}. Wanted ${state.wanted} stars.`);
+  if (state.screen === 'play' && state.missionIndex < 7) {
+    setStatus(`Mission ${state.missionIndex + 1} of 7. Money $${state.player.money}. Wanted ${state.wanted} stars.`);
   }
 
   endFrame(input);

@@ -1,9 +1,10 @@
-// Story missions: 5 missions with dialogue, waypoints, objectives and pay.
+// Story missions: 7 missions with dialogue, waypoints, objectives and pay.
 // The state machine lives in state.missionState { phase, collected, spawned }.
 // Each mission is a small state machine of its own — phase, collected count,
 // spawned flag — advanced by reaching places and finishing dialogue.
 import { MISSIONS } from './config.js';
 import { dist, addToast, addWanted, PLACES } from './world.js';
+import { maxHp, ammoCap } from './upgrades.js';
 import { sfx } from './audio.js';
 
 function startDialogue(state, lines, onDone) {
@@ -25,8 +26,9 @@ export function advanceDialogue(state, audio) {
 function completeMission(state, audio) {
   const m = MISSIONS[state.missionIndex];
   state.player.money += m.pay;
-  state.player.ammo = Math.min(120, state.player.ammo + 24);
-  state.player.hp = Math.min(100, state.player.hp + 30); // patch up between missions
+  state.moneyEarned = (state.moneyEarned || 0) + m.pay;
+  state.player.ammo = Math.min(ammoCap(state), state.player.ammo + 24);
+  state.player.hp = Math.min(maxHp(state), state.player.hp + 30); // patch up between missions
   state.stats.missionsDone += 1;
   sfx.jingle(audio);
   addToast(state, `Mission complete: ${m.name} — +$${m.pay}`);
@@ -37,6 +39,8 @@ function completeMission(state, audio) {
     state.won = true;
     state.over = 'won';
     state.screen = 'won';
+    // Save the win itself, or "play again" would reload a mid-game autosave.
+    import('./save.js').then((m) => m.saveGame(state)).catch(() => {});
     return;
   }
   beginMission(state, audio);
@@ -66,6 +70,52 @@ function beginMission(state, audio) {
   } else if (idx === 4) {
     state.waypoint = { x: PLACES.harbour.x, y: PLACES.harbour.y, label: PLACES.harbour.label };
     startDialogue(state, m.dialogue);
+  } else if (idx === 5) {
+    state.waypoint = { x: PLACES.hideout.x, y: PLACES.hideout.y, label: PLACES.hideout.label };
+    startDialogue(state, m.dialogue, () => spawnBoss(state, 'rico'));
+  } else if (idx === 6) {
+    state.waypoint = { x: PLACES.harbour.x, y: PLACES.harbour.y, label: PLACES.harbour.label };
+    startDialogue(state, m.dialogue, () => spawnBoss(state, 'voss'));
+  }
+}
+
+// Boss fights: one big enemy with a name, a large HP pool and a spread shot,
+// plus minions at half health. The boss lives in state.enemies with a boss
+// flag, so the normal combat code can shoot it — only its attacks and its
+// HP bar are special.
+function spawnBoss(state, kind) {
+  if (state.missionState.spawned) return;
+  state.missionState.spawned = true;
+  const isRico = kind === 'rico';
+  const x = isRico ? PLACES.hideout.x : PLACES.harbour.x;
+  const y = isRico ? PLACES.hideout.y : PLACES.harbour.y;
+  // Clear the heat for Rico (a fair duel); Voss brings the whole force.
+  state.wanted = 0; state.wantedPts = 0; state.hiddenTimer = 0;
+  state.policeCars.length = 0; state.officers.length = 0;
+  const boss = {
+    x: x + 60, y: y - 40, hp: isRico ? 400 : 350, maxHp: isRico ? 400 : 350,
+    shootCd: 1.5, color: isRico ? '#5b1a5b' : '#1a2a5b',
+    boss: true, name: isRico ? 'RICO' : 'CAPT. VOSS', kind, minionsSpawned: false,
+  };
+  state.enemies.push(boss);
+  state.boss = boss;
+  if (isRico) addToast(state, 'RICO is here — take him down!');
+  else {
+    addWanted(state, 4);
+    addToast(state, 'CAPT. VOSS is here with the whole force — take him down!');
+  }
+}
+
+export function updateBossFight(state, audio) {
+  const boss = state.boss;
+  if (!boss || boss.hp <= 0) return;
+  // At half health the boss calls in two minions, once.
+  if (!boss.minionsSpawned && boss.hp < boss.maxHp / 2) {
+    boss.minionsSpawned = true;
+    for (const [dx, dy] of [[-90, 60], [90, 60]]) {
+      state.enemies.push({ x: boss.x + dx, y: boss.y + dy, hp: 80, shootCd: 1 + Math.random(), color: '#7a1f1f' });
+    }
+    addToast(state, `${boss.name} called in backup!`);
   }
 }
 
@@ -131,7 +181,7 @@ export function updateMissions(state, dt, audio) {
       if (dist(pp.x, pp.y, PLACES.hideout.x, PLACES.hideout.y) < 130 && !state.dialogue) {
         startDialogue(state, MISSIONS[3].dialogue, () => spawnEnemies(state));
       }
-    } else if (state.enemies.length === 0) {
+    } else if (state.enemies.filter((e) => !e.bounty).length === 0) {
       completeMission(state, audio);
     }
   } else if (idx === 4) {
@@ -148,6 +198,28 @@ export function updateMissions(state, dt, audio) {
       if (dist(pp.x, pp.y, PLACES.hideout.x, PLACES.hideout.y) < 110) {
         completeMission(state, audio);
       }
+    }
+  } else if (idx === 5) {
+    // Rico boss fight at the Hideout.
+    updateBossFight(state, audio);
+    if (!state.missionState.spawned) {
+      if (dist(pp.x, pp.y, PLACES.hideout.x, PLACES.hideout.y) < 130 && !state.dialogue) {
+        startDialogue(state, MISSIONS[5].dialogue, () => spawnBoss(state, 'rico'));
+      }
+    } else if (!state.enemies.some((e) => e.boss)) {
+      state.boss = null;
+      completeMission(state, audio);
+    }
+  } else if (idx === 6) {
+    // Captain Voss boss fight at the Harbour.
+    updateBossFight(state, audio);
+    if (!state.missionState.spawned) {
+      if (dist(pp.x, pp.y, PLACES.harbour.x, PLACES.harbour.y) < 140 && !state.dialogue) {
+        startDialogue(state, MISSIONS[6].dialogue, () => spawnBoss(state, 'voss'));
+      }
+    } else if (!state.enemies.some((e) => e.boss)) {
+      state.boss = null;
+      completeMission(state, audio);
     }
   }
 }
@@ -174,4 +246,6 @@ export function resumeStory(state) {
     state.waypoint = { x: PLACES.park.x, y: PLACES.park.y, label: 'Package 1/3 — Park' };
   } else if (idx === 3) state.waypoint = { x: PLACES.hideout.x, y: PLACES.hideout.y, label: PLACES.hideout.label };
   else if (idx === 4) state.waypoint = { x: PLACES.harbour.x, y: PLACES.harbour.y, label: PLACES.harbour.label };
+  else if (idx === 5) state.waypoint = { x: PLACES.hideout.x, y: PLACES.hideout.y, label: PLACES.hideout.label };
+  else if (idx === 6) state.waypoint = { x: PLACES.harbour.x, y: PLACES.harbour.y, label: PLACES.harbour.label };
 }

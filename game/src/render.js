@@ -118,6 +118,12 @@ export function drawWorld(ctx, state, viewW, viewH) {
   // Cafe + hideout markers on their buildings.
   drawPlaceLabel(ctx, PLACES.cafe.x, PLACES.cafe.y, '☕ SUNRISE CAFE', '#fff3c4');
   drawPlaceLabel(ctx, PLACES.hideout.x, PLACES.hideout.y, '🏠 HIDEOUT', '#d6ffd6');
+  drawPlaceLabel(ctx, PLACES.garage.x, PLACES.garage.y, '🔧 GARAGE', '#ffd9b0');
+  drawPlaceLabel(ctx, PLACES.gunstore.x, PLACES.gunstore.y, '🔫 HARBOUR ARMS', '#ffc4c4');
+  drawPlaceLabel(ctx, PLACES.clinic.x, PLACES.clinic.y, '✚ PALM CLINIC', '#c4ffd6');
+  drawPlaceLabel(ctx, PLACES.casino.x, PLACES.casino.y, '🎰 GOLDEN PALM CASINO', '#ffe9a8');
+  drawPlaceLabel(ctx, PLACES.marina.x, PLACES.marina.y, '⚓ MARINA', '#c4e8ff');
+  drawPlaceLabel(ctx, PLACES.market.x, PLACES.market.y, '🏪 NIGHT MARKET', '#e8c4ff');
 
   // Trees and palms.
   for (const t of state.trees) {
@@ -197,16 +203,48 @@ export function drawWorld(ctx, state, viewW, viewH) {
     ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center';
     ctx.fillText('P', o.x, o.y + 3);
   }
-  // Enemies (rival crew).
+  // Enemies (rival crew) — bosses are bigger, with a name tag.
   for (const e of state.enemies) {
+    const r = e.boss ? 18 : 12;
     ctx.fillStyle = 'rgba(0,0,0,0.3)';
-    ctx.beginPath(); ctx.ellipse(e.x + 2, e.y + 3, 10, 7, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(e.x + 2, e.y + 3, r + 2, r - 2, 0, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = e.color;
-    ctx.beginPath(); ctx.arc(e.x, e.y, 12, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(e.x, e.y, r, 0, Math.PI * 2); ctx.fill();
+    if (e.boss) {
+      ctx.strokeStyle = '#ffd94d';
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(e.x, e.y, r + 5, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = '#ffd94d';
+      ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(e.name, e.x, e.y - r - 12);
+    }
+    const maxHp = e.maxHp || 100;
     ctx.fillStyle = '#ffd94d';
-    ctx.fillRect(e.x - 14, e.y - 24, 28, 5);
+    ctx.fillRect(e.x - 14, e.y - r - 8, 28, 5);
     ctx.fillStyle = '#e74c3c';
-    ctx.fillRect(e.x - 14, e.y - 24, 28 * Math.max(0, e.hp / 100), 5);
+    ctx.fillRect(e.x - 14, e.y - r - 8, 28 * Math.max(0, e.hp / maxHp), 5);
+  }
+  // Shopkeepers (named NPCs at their shops) + bounty target marker.
+  for (const npc of state.npcs) {
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath(); ctx.ellipse(npc.x + 2, npc.y + 3, 11, 7, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = npc.color;
+    ctx.beginPath(); ctx.arc(npc.x, npc.y, 11, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(npc.x, npc.y - 2, 5, 0, Math.PI * 2); ctx.fill();
+    // Name below the dot: the shop's place label sits above it.
+    ctx.fillStyle = '#222';
+    ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(npc.name, npc.x, npc.y + 28);
+  }
+  for (const e of state.enemies) {
+    if (!e.bounty) continue;
+    ctx.strokeStyle = '#ff4dd2';
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(e.x, e.y, 22, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = '#ff4dd2';
+    ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('BOUNTY', e.x, e.y - 26);
   }
   // Player on foot.
   const p = state.player;
@@ -339,7 +377,7 @@ export function drawTitle(ctx, state, viewW, viewH, hasSave) {
   ctx.font = '20px sans-serif';
   ctx.fillStyle = '#fff';
   ctx.fillText('Danny Vega is new in town. Mara Solis has work for him.', viewW / 2, 300);
-  ctx.fillText('Five missions. One harbour heist. Don\'t get caught.', viewW / 2, 330);
+  ctx.fillText('Seven missions. Two bosses. Three shops. Don\'t get caught.', viewW / 2, 330);
 
   const btnW = 320, btnH = 56;
   const bx = viewW / 2 - btnW / 2;
@@ -357,9 +395,10 @@ export function drawTitle(ctx, state, viewW, viewH, hasSave) {
   ctx.fillStyle = 'rgba(255,255,255,0.95)';
   const lines = [
     'WASD move / drive  •  Mouse aim  •  Click / Space shoot',
-    'E steal or enter a car / interact  •  P pause  •  M mute',
+    'E steal or enter a car / interact  •  J take a side job  •  P pause  •  M mute',
     'Steal cars, raise your wanted level, dodge the police,',
-    'and run all 5 story missions for Mara Solis.',
+    'and run all 7 story missions for Mara Solis — plus 2 bosses,',
+    '3 shops with 8 upgrades, and 3 kinds of side jobs.',
   ];
   lines.forEach((l, i) => ctx.fillText(l, viewW / 2, 560 + i * 28));
   ctx.font = '15px sans-serif';
@@ -385,8 +424,17 @@ export function drawEndScreen(ctx, state, viewW, viewH, kind) {
   ctx.font = '22px sans-serif';
   ctx.fillText(sub, viewW / 2, viewH / 2 - 24);
   ctx.font = '20px sans-serif';
-  ctx.fillText(`Money: $${state.player.money}   •   Missions done: ${state.stats.missionsDone}/5   •   Cars stolen: ${state.stats.carsStolen}`, viewW / 2, viewH / 2 + 20);
+  ctx.fillText(`Money: $${state.player.money}   •   Missions done: ${state.stats.missionsDone}/7   •   Cars stolen: ${state.stats.carsStolen}`, viewW / 2, viewH / 2 + 20);
+  ctx.fillText(`Bosses beaten: ${state.bossesDown || 0}/2   •   Side jobs: ${state.stats.jobsDone || 0}   •   Upgrades: ${(state.upgrades || []).length}/8`, viewW / 2, viewH / 2 + 48);
+  if (kind === 'won') {
+    const rank = (state.bossesDown || 0) >= 2 && (state.stats.jobsDone || 0) >= 3 ? 'S'
+      : (state.bossesDown || 0) >= 2 ? 'A'
+      : (state.stats.missionsDone || 0) >= 7 ? 'B' : 'C';
+    ctx.fillStyle = '#ffd94d';
+    ctx.font = 'bold 34px sans-serif';
+    ctx.fillText(`RANK ${rank}`, viewW / 2, viewH / 2 + 92);
+  }
   ctx.fillStyle = '#ffe9a8';
   ctx.font = 'bold 22px sans-serif';
-  ctx.fillText(kind === 'pause' ? 'Press P to resume' : 'Press Enter to play again', viewW / 2, viewH / 2 + 72);
+  ctx.fillText(kind === 'pause' ? 'Press P to resume' : 'Press Enter to play again', viewW / 2, viewH / 2 + (kind === 'won' ? 132 : 72));
 }

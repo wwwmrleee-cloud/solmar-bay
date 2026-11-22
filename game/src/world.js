@@ -10,6 +10,7 @@ import { updatePeds } from './pedestrians.js';
 import { updatePolice, addWanted } from './police.js';
 import { updateCombat } from './combat.js';
 import { updateMissions } from './missions.js';
+import { updateJobs } from './jobs.js';
 
 export const PLACES = {
   cafe: { x: 1125, y: 1230, label: 'Sunrise Cafe' },
@@ -19,6 +20,12 @@ export const PLACES = {
   beach: { x: 3450, y: 1400, label: 'Beach' },
   harbour: { x: 450, y: 2560, label: 'Harbour Cash' },
   downtown: { x: 1575, y: 1125, label: 'Downtown' },
+  garage: { x: 1575, y: 675, label: 'Rusty Anchor Garage' },
+  gunstore: { x: 2475, y: 1125, label: 'Harbour Arms' },
+  clinic: { x: 1125, y: 2025, label: 'Palm Clinic' },
+  casino: { x: 2925, y: 675, label: 'Golden Palm Casino' },
+  marina: { x: 3375, y: 1575, label: 'Marina' },
+  market: { x: 2025, y: 1575, label: 'Night Market' },
 };
 
 const CAR_COLORS = ['#d94f3d', '#3d7bd9', '#e8c33d', '#4fae5f', '#8a5fc0', '#e07a3d', '#c0c8d0', '#2f2f38'];
@@ -44,14 +51,28 @@ export function createWorld(seed) {
     missionIndex: 0, missionState: { phase: 'go', collected: [], spawned: false },
     waypoint: null,
     dialogue: null,
+    boss: null,
     toast: '', toastT: 0,
     message: '',
     camera: { x: PLAYER.startX, y: PLAYER.startY },
     shake: 0,
-    stats: { shots: 0, hits: 0, carsStolen: 0, pedsHit: 0, missionsDone: 0, kills: 0 },
+    stats: { shots: 0, hits: 0, carsStolen: 0, pedsHit: 0, missionsDone: 0, kills: 0, jobsTaken: 0, jobsDone: 0, upgradesBought: 0 },
     hiddenFound: 0, packagesCollected: 0,
     hiddenPackages: [],
     missionPackages: [],
+    // Shops, jobs and bosses (round 3): named shopkeepers stand at their
+    // shops, the active side job lives in job, the open shop panel in shop.
+    npcs: [
+      { name: 'Gus', role: 'garage', shop: 'garage', x: 1575, y: 675, color: '#e07a3d' },
+      { name: 'Lena', role: 'gunstore', shop: 'gunstore', x: 2475, y: 1125, color: '#c95f8f' },
+      { name: 'Dr. Ana', role: 'clinic', shop: 'clinic', x: 1125, y: 2025, color: '#4fae5f' },
+    ],
+    job: null,
+    shop: null,
+    upgrades: [],
+    moneyEarned: 0,
+    bossesDown: 0,
+    startTime: 0,
     saveTimer: 0,
     started: false,
     won: false,
@@ -132,7 +153,7 @@ export function createWorld(seed) {
   state.getawayCar = addCar(1125 + 34, 1330, Math.PI / 2, { color: '#3d7bd9', getaway: true });
 
   // --- pedestrians on sidewalks ---
-  for (let i = 0; i < 26; i += 1) {
+  for (let i = 0; i < 36; i += 1) {
     const vertical = rng() < 0.5;
     const road = vertical ? pick(rng, V_ROADS) : pick(rng, H_ROADS);
     const along = range(rng, 300, 2400);
@@ -145,10 +166,13 @@ export function createWorld(seed) {
     });
   }
 
-  // Hidden packages (side activity).
+  // Hidden packages (side activity): 12 stashed around the city.
   const hiddenSpots = [
     { x: 700, y: 250 }, { x: 2900, y: 650 }, { x: 2500, y: 2000 },
     { x: 350, y: 1600 }, { x: 2050, y: 2500 },
+    { x: 1125, y: 250 }, { x: 2925, y: 2025 }, { x: 675, y: 675 },
+    { x: 2475, y: 250 }, { x: 1575, y: 2475 }, { x: 3375, y: 900 },
+    { x: 450, y: 1125 },
   ];
   for (const s of hiddenSpots) state.hiddenPackages.push({ ...s, found: false });
 
@@ -201,6 +225,7 @@ export function stepWorld(state, dt, input, audio) {
   updatePolice(state, dt, audio);
   updateCombat(state, dt, audio);
   updateMissions(state, dt, audio);
+  updateJobs(state, dt, audio);
 
   // Wanted decay: hidden from police for a while.
   if (state.wanted > 0) {

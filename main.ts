@@ -1,13 +1,15 @@
 // Solmar Bay — entry point for the make.fun gta6-01 "Make GTA 6" bounty.
 // This is an original top-down open-world crime game: Danny Vega drives,
-// steals cars, outruns the police and runs five story missions across a
-// sun-soaked coastal city. The game itself is plain static files under
-// game/ (game/index.html plus ES modules, no libraries, no network calls),
-// so any desktop browser can open it offline. What this file does is hand
-// that folder in: it copies game/ and screenshots/ next to this file into
-// the output directory and writes output/dossier.json, the summary the
-// judge reads, using the vendored make.fun library. The game code was
-// written fresh for this entry; the only vendored file is the library.
+// steals cars, outruns the police and runs seven story missions across a
+// sun-soaked coastal city, beating two bosses, buying eight upgrades in
+// three shops, and taking side jobs between missions. The game itself is
+// plain static files under game/ (game/index.html plus ES modules, no
+// libraries, no network calls), so any desktop browser can open it offline.
+// What this file does is hand that folder in: it copies game/ and
+// screenshots/ next to this file into the output directory and writes
+// output/dossier.json, the summary the judge reads, using the vendored
+// make.fun library. The game code was written fresh for this entry; the
+// only vendored file is the library.
 //
 // To play locally: `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:

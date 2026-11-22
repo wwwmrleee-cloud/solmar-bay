@@ -4,6 +4,8 @@
 // waypoint marker always sits on a real street.
 import { WORLD, MISSIONS } from './config.js';
 import { PLACES } from './world.js';
+import { maxHp, ownedCount, shopFor, shopItems, owns } from './upgrades.js';
+import { jobObjective } from './jobs.js';
 
 function fmtClock(min) {
   const h = Math.floor(min / 60) % 24;
@@ -15,49 +17,59 @@ export function drawHud(ctx, state, viewW, viewH, muted) {
   const p = state.player;
   // Top-left panel: health, money, stars.
   ctx.fillStyle = 'rgba(0,0,0,0.55)';
-  roundRect(ctx, 12, 12, 250, 96, 10); ctx.fill();
+  roundRect(ctx, 12, 12, 250, 126, 10); ctx.fill();
   ctx.fillStyle = '#fff';
   ctx.font = 'bold 16px sans-serif';
   ctx.textAlign = 'left';
   ctx.fillText('DANNY VEGA', 24, 34);
-  // Health bar.
+  // Health bar (scaled to the player's upgraded max HP).
   ctx.fillStyle = '#333';
   roundRect(ctx, 24, 44, 150, 14, 5); ctx.fill();
   ctx.fillStyle = p.hp > 50 ? '#4caf50' : p.hp > 25 ? '#ff9800' : '#f44336';
-  roundRect(ctx, 24, 44, 150 * Math.max(0, p.hp / 100), 14, 5); ctx.fill();
+  roundRect(ctx, 24, 44, 150 * Math.max(0, p.hp / maxHp(state)), 14, 5); ctx.fill();
   ctx.fillStyle = '#fff';
   ctx.font = '13px sans-serif';
-  ctx.fillText(`HP ${Math.ceil(p.hp)}`, 180, 56);
+  ctx.fillText(`HP ${Math.ceil(p.hp)}/${maxHp(state)}`, 180, 56);
   ctx.fillStyle = '#8be28b';
   ctx.font = 'bold 18px sans-serif';
   ctx.fillText(`$${p.money}`, 24, 82);
+  ctx.fillStyle = '#ffd94d';
+  ctx.font = '13px sans-serif';
+  ctx.fillText(`Upgrades ${ownedCount(state)}/8  •  Jobs ${state.stats.jobsDone || 0}  •  Bosses ${state.bossesDown || 0}/2`, 24, 100);
   // Wanted stars.
   ctx.font = '22px sans-serif';
   for (let i = 0; i < 5; i += 1) {
     ctx.fillStyle = i < state.wanted ? '#ffd94d' : 'rgba(255,255,255,0.3)';
-    ctx.fillText('★', 24 + i * 26, 104);
+    ctx.fillText('★', 24 + i * 26, 128);
   }
   ctx.fillStyle = '#fff';
   ctx.font = '13px sans-serif';
-  ctx.fillText(fmtClock(state.clockMin), 200, 104);
+  ctx.fillText(fmtClock(state.clockMin), 200, 128);
 
   // Mission objective (bottom-left).
   const m = MISSIONS[state.missionIndex];
   ctx.fillStyle = 'rgba(0,0,0,0.55)';
-  const objText = m ? `MISSION ${m.id}/5 — ${m.name}` : 'All missions complete!';
+  const objText = m ? `MISSION ${m.id}/7 — ${m.name}` : 'All missions complete!';
   const brief = m ? m.brief : 'Free roam Solmar Bay.';
+  const jobLine = jobObjective(state);
   ctx.font = 'bold 15px sans-serif';
   const w1 = ctx.measureText(objText).width;
   ctx.font = '14px sans-serif';
   const w2 = ctx.measureText(brief).width;
-  const bw = Math.max(w1, w2) + 28;
-  roundRect(ctx, 12, viewH - 76, bw, 64, 10); ctx.fill();
+  const w3 = jobLine ? ctx.measureText(jobLine).width : 0;
+  const bw = Math.max(w1, w2, w3) + 28;
+  const bh = jobLine ? 88 : 64;
+  roundRect(ctx, 12, viewH - 52 - bh, bw, bh, 10); ctx.fill();
   ctx.fillStyle = '#ffd94d';
   ctx.font = 'bold 15px sans-serif';
-  ctx.fillText(objText, 24, viewH - 52);
+  ctx.fillText(objText, 24, viewH - 52 - bh + 24);
   ctx.fillStyle = '#fff';
   ctx.font = '14px sans-serif';
-  ctx.fillText(brief, 24, viewH - 30);
+  ctx.fillText(brief, 24, viewH - 52 - bh + 46);
+  if (jobLine) {
+    ctx.fillStyle = '#7fe7ff';
+    ctx.fillText(jobLine, 24, viewH - 52 - bh + 68);
+  }
 
   // Ammo + speed (bottom-right).
   ctx.fillStyle = 'rgba(0,0,0,0.55)';
@@ -89,6 +101,26 @@ export function drawHud(ctx, state, viewW, viewH, muted) {
   }
 
   drawMinimap(ctx, state, viewW, viewH);
+
+  // Boss HP bar (top-centre) while a boss is alive.
+  if (state.boss && state.boss.hp > 0) {
+    const b = state.boss;
+    const bw2 = 420, bx = viewW / 2 - bw2 / 2, by = 14;
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    roundRect(ctx, bx - 10, by - 4, bw2 + 20, 44, 10); ctx.fill();
+    ctx.fillStyle = '#ffd94d';
+    ctx.font = 'bold 15px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`${b.name}  —  BOSS`, viewW / 2, by + 14);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#333';
+    roundRect(ctx, bx, by + 20, bw2, 12, 5); ctx.fill();
+    ctx.fillStyle = '#e74c3c';
+    roundRect(ctx, bx, by + 20, bw2 * Math.max(0, b.hp / (b.maxHp || 100)), 12, 5); ctx.fill();
+  }
+
+  // Shop panel while a shop is open.
+  if (state.shop) drawShop(ctx, state, viewW, viewH);
 
   // Toast message.
   if (state.toastT > 0 && state.toast) {
@@ -122,6 +154,45 @@ export function drawHud(ctx, state, viewW, viewH, muted) {
     ctx.fillText('E / click to continue ▸', viewW / 2 + 340, viewH - 104);
     ctx.textAlign = 'left';
   }
+}
+
+function drawShop(ctx, state, viewW, viewH) {
+  const shop = shopFor(state, state.shop.shopId);
+  if (!shop) return;
+  const items = shopItems(state.shop.shopId);
+  const pw = 520, ph = 64 + items.length * 34;
+  const px = viewW / 2 - pw / 2, py = viewH / 2 - ph / 2;
+  ctx.fillStyle = 'rgba(0,0,0,0.82)';
+  roundRect(ctx, px, py, pw, ph, 12); ctx.fill();
+  ctx.strokeStyle = '#ffd94d';
+  ctx.lineWidth = 2;
+  roundRect(ctx, px, py, pw, ph, 12); ctx.stroke();
+  ctx.fillStyle = '#ffd94d';
+  ctx.font = 'bold 19px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(`${shop.name} — ${shop.keeper}`, px + 20, py + 32);
+  ctx.fillStyle = '#8be28b';
+  ctx.font = 'bold 17px sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillText(`$${state.player.money}`, px + pw - 20, py + 32);
+  ctx.textAlign = 'left';
+  items.forEach((item, i) => {
+    const y = py + 62 + i * 34;
+    const owned = owns(state, item.id);
+    ctx.fillStyle = i === state.shop.sel ? 'rgba(255,217,77,0.18)' : 'transparent';
+    if (i === state.shop.sel) { roundRect(ctx, px + 10, y - 20, pw - 20, 30, 6); ctx.fill(); }
+    ctx.fillStyle = owned ? '#888' : '#fff';
+    ctx.font = '16px sans-serif';
+    ctx.fillText(`${i + 1}. ${item.name} — ${item.desc}`, px + 20, y);
+    ctx.fillStyle = owned ? '#888' : '#ffd94d';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(owned ? 'OWNED' : `$${item.price}`, px + pw - 20, y);
+    ctx.textAlign = 'left';
+  });
+  ctx.fillStyle = '#bbb';
+  ctx.font = '14px sans-serif';
+  ctx.fillText('Press 1-9 to buy, arrows to choose, E to leave', px + 20, py + ph - 12);
 }
 
 function wrapText(ctx, text, x, y, maxW, lh) {

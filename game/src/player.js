@@ -6,6 +6,7 @@ import { PLAYER } from './config.js';
 import { hitBuilding, inWorld, dist, addToast, addWanted, PLACES } from './world.js';
 import { isDown, wasPressed } from './input.js';
 import { sfx } from './audio.js';
+import { shopFor } from './upgrades.js';
 
 function tryMove(state, dx, dy) {
   const p = state.player;
@@ -59,6 +60,16 @@ export function updatePlayer(state, dt, input, audio) {
 
 export function tryInteract(state, audio) {
   const p = state.player;
+  // Shopkeepers first: walk up to Gus, Lena or Dr. Ana and press E to shop.
+  for (const npc of state.npcs) {
+    if (dist(p.x, p.y, npc.x, npc.y) < 80) {
+      const shop = shopFor(state, npc.shop);
+      state.shop = { shopId: npc.shop, sel: 0 };
+      state.dialogue = { lines: [shop.line, `${shop.name} — press 1-${shop.items.length} to buy, E to leave.`], idx: 0, onDone: null };
+      sfx.click(audio);
+      return true;
+    }
+  }
   // Mission waypoint arrival is handled by missions.js; here we handle pickups.
   for (const pkg of state.missionPackages) {
     if (!pkg.taken && dist(p.x, p.y, pkg.x, pkg.y) < 70) {
@@ -76,7 +87,7 @@ export function tryInteract(state, audio) {
       state.hiddenFound += 1;
       state.player.money += 50;
       sfx.pickup(audio);
-      addToast(state, `Hidden package found! +$50 (${state.hiddenFound}/5)`);
+      addToast(state, `Hidden package found! +$50 (${state.hiddenFound}/12)`);
       return true;
     }
   }

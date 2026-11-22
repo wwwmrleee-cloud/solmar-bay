@@ -86,3 +86,32 @@ Zero known bugs, zero known optimisation points. Full playthrough clean.
   4 screenshots each < 256 KiB, 1280x800). Screenshots re-read: HUD,
   minimap, stars, mission text, traffic and police all legible.
 - Result: clean. Zero known bugs, zero known optimisation points — still.
+
+## Round 3 — 2026-11-22 (density pass, solmar-r3.mjs, 50 checks)
+- Scope: 3 shops + 8 upgrades, 2 bosses + 2 story missions (5 -> 7),
+  3 repeatable side jobs, hidden packages 5 -> 12, peds 26 -> 36,
+  3 new districts, rank screen, save v2 + save-on-win. Fresh recording 3,
+  fresh kit (gta6-01-kit-v3).
+- Bugs found and fixed during the loop:
+  1. Config edit dropped the Harbour Heist mission (array went 5 -> 6
+     entries, game ended after the 6th mission and Voss never spawned).
+     FIX: restored Harbour Heist as mission 5; MISSIONS is 7 again.
+  2. Continue could report more hidden packages than exist: a v1 save's
+     hiddenFound count survived while the found flags reset. FIX: save
+     v2 stores the found package indices; Continue restores exactly them.
+  3. Winning never saved, so Enter after the win reloaded a mid-game
+     autosave. FIX: saveGame() on the win screen; Continue after a win
+     resumes free roam with 7/7 missions.
+  4. NPC name labels sat on top of shop place labels (Dr. Ana half
+     hidden). FIX: NPC names draw below their dot.
+- Test-script fixes (not game bugs): mission intro dialogues must be
+  cleared before E can enter a car; gun-store test under-funded ammo;
+  bounty target must be approached on foot; FPS measured at 1920x1080.
+- FPS note: headless Chromium (software rendering) gives 12-23 FPS for
+  BOTH round 2 and round 3 in this environment (measured side by side
+  with solmar-fps.mjs: round 2 chase 13-18, round 3 chase 17-23) — no
+  regression. The round-2 "60 FPS" figure was a headed-browser number.
+- Final run: 50/50 PASS, 0 console errors, 0 failed requests. Screenshots
+  re-staged (start/drive/chase/mission-boss), each < 256 KiB, 1280x800,
+  visually reviewed: title, driving at 165 km/h, 3-star chase with 3
+  police cars, Rico boss fight with boss HP bar all legible.

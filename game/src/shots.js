@@ -1,4 +1,4 @@
-// Staged screenshot scenes for ?shot=start|drive|chase|mission.
+// Staged screenshot scenes for ?shot=start|drive|chase|mission|boss|shop.
 // Each one plays the real rules forward from a fresh world with a simple
 // autopilot, so the frame is what a short game really looks like and the
 // same seed always gives the same frame. Staging never draws a mock: every
@@ -112,8 +112,44 @@ export function stageShot(name, world) {
     simulate(world, 4, { x: 2475, y: 1575 });
     return { screen: SCREEN_PLAY, best: 0 };
   }
-  // mission: hideout shootout, mission 4, enemies + objective visible.
-  world.missionIndex = 3;
+  if (name === 'boss') {
+    // Rico boss fight at the Hideout: boss + minions + boss HP bar.
+    world.missionIndex = 5;
+    world.missionState = { phase: 'go', collected: [], spawned: true };
+    world.waypoint = { x: PLACES.hideout.x, y: PLACES.hideout.y, label: PLACES.hideout.label };
+    world.player.x = PLACES.hideout.x - 60;
+    world.player.y = PLACES.hideout.y + 140;
+    world.player.angle = -Math.PI / 2;
+    world.camera.x = world.player.x;
+    world.camera.y = world.player.y;
+    const boss = {
+      x: PLACES.hideout.x + 60, y: PLACES.hideout.y - 40, hp: 400, maxHp: 400,
+      shootCd: 1, color: '#5b1a5b', boss: true, name: 'RICO', kind: 'rico', minionsSpawned: false,
+    };
+    world.enemies.push(boss);
+    world.boss = boss;
+    for (const [x, y] of [[675, 1900], [850, 2025]]) {
+      world.enemies.push({ x, y, hp: 80, shootCd: 1, color: '#7a1f1f' });
+    }
+    world.bullets.push({ x: world.player.x + 10, y: world.player.y - 40, angle: -Math.PI / 2, speed: 760, from: 'player', life: 0.6, dmg: 34 });
+    simulate(world, 1.5, null);
+    return { screen: SCREEN_PLAY, best: 0 };
+  }
+  if (name === 'shop') {
+    // Lena's gun store: shop panel open over a living street.
+    world.missionIndex = 1;
+    world.player.x = PLACES.gunstore.x - 40;
+    world.player.y = PLACES.gunstore.y + 60;
+    world.player.angle = 0;
+    world.player.money = 1250;
+    world.camera.x = world.player.x;
+    world.camera.y = world.player.y;
+    world.shop = { shopId: 'gunstore', sel: 0 };
+    simulate(world, 1.5, null);
+    return { screen: SCREEN_PLAY, best: 0 };
+  }
+  // mission: Rico boss fight, mission 6, boss + minions + objective visible.
+  world.missionIndex = 5;
   world.missionState = { phase: 'go', collected: [], spawned: true };
   world.waypoint = { x: PLACES.hideout.x, y: PLACES.hideout.y, label: PLACES.hideout.label };
   world.player.x = PLACES.hideout.x - 40;
@@ -121,7 +157,13 @@ export function stageShot(name, world) {
   world.player.angle = -Math.PI / 2;
   world.camera.x = world.player.x;
   world.camera.y = world.player.y;
-  // Enemies on the roads around the hideout — never inside a building.
+  const boss = {
+    x: PLACES.hideout.x + 60, y: PLACES.hideout.y - 40, hp: 400, maxHp: 400,
+    shootCd: 1, color: '#5b1a5b', boss: true, name: 'RICO', kind: 'rico', minionsSpawned: false,
+  };
+  world.enemies.push(boss);
+  world.boss = boss;
+  // Rival crew minions on the roads around the hideout — never inside a building.
   const spots = [
     [675, 1900], [675, 2260], [500, 2025],
     [850, 2025], [450, 2025], [900, 2025],

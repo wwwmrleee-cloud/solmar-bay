@@ -5,6 +5,7 @@
 import { WORLD } from './config.js';
 import { dist, hitBuilding, inWorld, addParticles, addToast, playerPos } from './world.js';
 import { sfx, setSiren } from './audio.js';
+import { carDamageFactor } from './upgrades.js';
 
 export function addWanted(state, stars) {
   const pts = stars * 25;
@@ -50,7 +51,7 @@ export function updatePolice(state, dt, audio) {
     // Ram the player's car. A player on foot is left to the officers.
     if (d < 46 && state.player.inCar !== null) {
       const pc = state.cars[state.player.inCar];
-      pc.hp -= 14 * dt;
+      pc.hp -= 14 * dt * carDamageFactor(state);
       pc.speed *= 0.98;
       state.shake = Math.max(state.shake, 3);
       if (Math.random() < dt * 4) { addParticles(state, car.x, car.y, '#ffb347', 4, 150); sfx.crash(audio); }

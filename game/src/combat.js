@@ -4,10 +4,11 @@
 // bullet dies on the first building it hits, so there is no shooting
 // through walls.
 import { BULLET_SPEED } from './config.js';
-import { hitBuilding, dist, addParticles, addWanted, playerPos, nearestPoliceDist } from './world.js';
+import { hitBuilding, dist, addParticles, addWanted, addToast, playerPos, nearestPoliceDist } from './world.js';
 import { isDown, wasPressed } from './input.js';
 import { sfx } from './audio.js';
 import { scarePeds } from './pedestrians.js';
+import { pistolDamage, fireInterval, carDamageFactor } from './upgrades.js';
 
 export function updateCombat(state, dt, audio) {
   const p = state.player;
@@ -16,13 +17,13 @@ export function updateCombat(state, dt, audio) {
   if (p.inCar === null && state.screen === 'play') {
     const wantShoot = (inputWantsShoot(state)) && p.shootCd <= 0 && p.ammo > 0;
     if (wantShoot) {
-      p.shootCd = 0.22;
+      p.shootCd = fireInterval(state);
       p.ammo -= 1;
       state.stats.shots += 1;
       const a = p.angle + (Math.random() - 0.5) * 0.06;
       state.bullets.push({
         x: p.x + Math.cos(a) * 22, y: p.y + Math.sin(a) * 22,
-        angle: a, speed: BULLET_SPEED, from: 'player', life: 1.1, dmg: 34,
+        angle: a, speed: BULLET_SPEED, from: 'player', life: 1.1, dmg: pistolDamage(state),
       });
       addParticles(state, p.x + Math.cos(a) * 26, p.y + Math.sin(a) * 26, '#ffd94d', 3, 160);
       sfx.shoot(audio);
@@ -37,15 +38,19 @@ export function updateCombat(state, dt, audio) {
   }
 
   // Enemy shooting (rival crew): aim at the player, inaccurate.
+  // Bosses fire a 3-bullet spread and shoot a little faster.
   for (const e of state.enemies) {
     if (e.hp <= 0) continue;
     const pp = playerPos(state);
     const d = dist(e.x, e.y, pp.x, pp.y);
     e.shootCd -= dt;
     if (d < 520 && e.shootCd <= 0) {
-      e.shootCd = 1.3 + Math.random() * 0.9;
+      e.shootCd = e.boss ? 1.1 + Math.random() * 0.6 : 1.3 + Math.random() * 0.9;
       const a = Math.atan2(pp.y - e.y, pp.x - e.x) + (Math.random() - 0.5) * 0.35;
-      state.bullets.push({ x: e.x, y: e.y, angle: a, speed: 560, from: 'enemy', life: 1.2, dmg: 6 });
+      const shots = e.boss ? [-0.22, 0, 0.22] : [0];
+      for (const off of shots) {
+        state.bullets.push({ x: e.x, y: e.y, angle: a + off, speed: 560, from: 'enemy', life: 1.2, dmg: e.boss ? 9 : 6 });
+      }
       sfx.enemyShoot(audio);
     }
     // Enemies shuffle toward the player when far.
@@ -77,6 +82,12 @@ export function updateCombat(state, dt, audio) {
           addParticles(state, b.x, b.y, '#e74c3c', 6, 160);
           if (e.hp <= 0) {
             state.stats.kills += 1;
+            if (e.boss) {
+              state.bossesDown = (state.bossesDown || 0) + 1;
+              if (state.boss === e) state.boss = null;
+              addToast(state, `${e.name} is down!`);
+              sfx.jingle(audio);
+            }
             addParticles(state, e.x, e.y, '#e74c3c', 16, 260);
           }
           dead = true;
@@ -121,7 +132,7 @@ export function updateCombat(state, dt, audio) {
       if (dist(b.x, b.y, pp.x, pp.y) < (inCar ? 26 : 15)) {
         if (inCar) {
           const car = state.cars[state.player.inCar];
-          car.hp -= b.dmg;
+          car.hp -= b.dmg * carDamageFactor(state);
           if (car.hp <= 0) { car.hp = 0; }
         } else if (state.player.invuln <= 0) {
           state.player.hp -= b.dmg;
