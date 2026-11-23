@@ -1,124 +1,187 @@
-// Wanted level (0–5 stars) and police AI: patrol cars that chase and ram,
-// officers on foot who shoot and can bust the player.
-// Wanted is points under the hood (25 per star, 125 max), so a small crime
-// still moves the meter a little instead of jumping a whole star.
-import { WORLD } from './config.js';
-import { dist, hitBuilding, inWorld, addParticles, addToast, playerPos } from './world.js';
-import { sfx, setSiren } from './audio.js';
-import { carDamageFactor } from './upgrades.js';
+// Solmar Bay — the wanted level and the police. Wanted points run
+// 0 to 125, twenty-five per star. The police come in numbers that
+// match the level, and the heat only fades when Danny stays hidden.
 
-export function addWanted(state, stars) {
-  const pts = stars * 25;
-  state.wantedPts = Math.min(125, state.wantedPts + pts);
-  const w = Math.min(5, Math.floor(state.wantedPts / 25));
-  if (w > state.wanted) {
-    state.wanted = w;
-    addToast(state, `Wanted level ${w} — the police are coming!`);
+import { S, clamp, dist, angleTo, angleDiff, moveCircle, clearOfBuildings, nearestIntersection, spawnSparks } from './world.js';
+import { WORLD_W, WORLD_H, WANTED, POLICE_CAR, OFFICER } from './config.js';
+import { playCrash } from './audio.js';
+
+export function wantedLevel() {
+  return Math.min(WANTED.maxStars, Math.floor(S.wantedPoints / WANTED.pointsPerStar));
+}
+
+export function addWantedPoints(points) {
+  S.wantedPoints = clamp(S.wantedPoints + points, 0, WANTED.maxPoints);
+}
+
+export function addWantedStars(stars) {
+  addWantedPoints(stars * WANTED.pointsPerStar);
+}
+
+export function clearWanted() {
+  S.wantedPoints = 0;
+  S.hiddenTimer = 0;
+  S.police.length = 0;
+  S.officers.length = 0;
+}
+
+function nearestPoliceDist() {
+  let best = Infinity;
+  const p = S.player;
+  for (const car of S.police) best = Math.min(best, dist(p.x, p.y, car.x, car.y));
+  for (const off of S.officers) best = Math.min(best, dist(p.x, p.y, off.x, off.y));
+  return best;
+}
+
+// The heat decays only while no police is close enough to see Danny.
+function updateDecay(dt) {
+  const near = nearestPoliceDist();
+  if (near > WANTED.hiddenRange && S.wantedPoints > 0) {
+    S.hiddenTimer += dt;
+    if (S.hiddenTimer >= WANTED.hiddenDelay) {
+      const before = wantedLevel();
+      S.wantedPoints = Math.max(0, S.wantedPoints - WANTED.decayPerSecond * dt);
+      if (wantedLevel() < before) {
+        S.toast = { text: 'You lost the heat', until: S.time + 4 };
+      }
+    }
+  } else {
+    S.hiddenTimer = 0;
   }
 }
 
-export function updatePolice(state, dt, audio) {
-  const p = playerPos(state);
-  const want = state.wanted;
-  setSiren(audio, want > 0);
+function randomSpawnPoint(minD, maxD) {
+  const p = S.player;
+  for (let tries = 0; tries < 12; tries++) {
+    const a = S.rng() * Math.PI * 2;
+    const d = minD + S.rng() * (maxD - minD);
+    const x = clamp(p.x + Math.cos(a) * d, 60, WORLD_W - 60);
+    const y = clamp(p.y + Math.sin(a) * d, 60, WORLD_H - 60);
+    if (clearOfBuildings(x, y, 30)) return { x, y };
+  }
+  // No clear spot in twelve tries: fall back to the nearest road
+  // intersection, which is always clear, instead of a point that
+  // might sit inside a building.
+  const cross = nearestIntersection(p.x, p.y);
+  return cross ? { x: cross.x, y: cross.y } : { x: clamp(p.x + minD, 60, WORLD_W - 60), y: clamp(p.y, 60, WORLD_H - 60) };
+}
 
-  // Spawn police to match the wanted level.
-  const wantCars = want >= 1 ? Math.min(want, 4) : 0;
-  const wantOfficers = want >= 3 ? Math.min(want - 1, 4) : 0;
-  while (state.policeCars.length < wantCars) spawnPoliceCar(state, p);
-  while (state.officers.length < wantOfficers) spawnOfficer(state, p);
-  // Despawn extras when the heat drops.
-  if (state.policeCars.length > wantCars) state.policeCars.splice(wantCars);
-  if (state.officers.length > wantOfficers) state.officers.splice(wantOfficers);
+function spawnPoliceCar() {
+  const spot = randomSpawnPoint(POLICE_CAR.spawnMin, POLICE_CAR.spawnMax);
+  S.police.push({
+    x: spot.x, y: spot.y, angle: 0, speed: 0, health: 100, maxHealth: 100,
+    color: '#1a1a2e', kind: 'police', driver: false, wrecked: false, siren: S.rng() * 2,
+  });
+}
 
-  // Police cars chase and ram.
-  for (const car of state.policeCars) {
-    const target = Math.atan2(p.y - car.y, p.x - car.x);
-    let diff = target - car.angle;
-    while (diff > Math.PI) diff -= Math.PI * 2;
-    while (diff < -Math.PI) diff += Math.PI * 2;
-    car.angle += Math.max(-2.4 * dt, Math.min(2.4 * dt, diff));
-    const d = dist(car.x, car.y, p.x, p.y);
-    // Police cars ram the player's car, but stop short of a player on foot
-    // (officers do the arresting) so a shootout on foot stays survivable.
-    const playerOnFoot = state.player.inCar === null;
-    const speed = playerOnFoot ? (d > 90 ? 340 : 0) : (d > 60 ? 380 : 140);
-    car.speed += (speed - car.speed) * Math.min(1, dt * 2);
-    const nx = car.x + Math.cos(car.angle) * car.speed * dt;
-    const ny = car.y + Math.sin(car.angle) * car.speed * dt;
-    if (inWorld(nx, ny) && !hitBuilding(state, nx, ny, 18)) { car.x = nx; car.y = ny; }
-    else { car.angle += Math.PI * 0.5 * dt * 4; car.speed *= 0.7; }
-    // Ram the player's car. A player on foot is left to the officers.
-    if (d < 46 && state.player.inCar !== null) {
-      const pc = state.cars[state.player.inCar];
-      pc.hp -= 14 * dt * carDamageFactor(state);
-      pc.speed *= 0.98;
-      state.shake = Math.max(state.shake, 3);
-      if (Math.random() < dt * 4) { addParticles(state, car.x, car.y, '#ffb347', 4, 150); sfx.crash(audio); }
-      if (pc.hp <= 0) { pc.hp = 0; addToast(state, 'Your car is wrecked!'); }
+function spawnOfficer() {
+  const spot = randomSpawnPoint(OFFICER.spawnMin, OFFICER.spawnMax);
+  S.officers.push({
+    x: spot.x, y: spot.y, angle: 0, speed: 0, health: 100,
+    kind: 'officer', cooldown: 1 + S.rng(),
+  });
+}
+
+// Keep the police numbers matched to the wanted level.
+function matchPoliceCounts() {
+  const level = wantedLevel();
+  const wantCars = Math.min(level, WANTED.maxPoliceCars);
+  while (S.police.length < wantCars) spawnPoliceCar();
+  while (S.police.length > wantCars) S.police.pop();
+  const wantOfficers = level >= 3 ? Math.min(level - 1, WANTED.maxOfficers) : 0;
+  while (S.officers.length < wantOfficers) spawnOfficer();
+  while (S.officers.length > wantOfficers) S.officers.pop();
+}
+
+function updatePoliceCar(car, dt) {
+  const p = S.player;
+  const d = dist(car.x, car.y, p.x, p.y);
+  const target = angleTo(car.x, car.y, p.x, p.y);
+  const turn = clamp(angleDiff(car.angle, target), -POLICE_CAR.steerRate * dt, POLICE_CAR.steerRate * dt);
+  car.angle += turn;
+  let speed;
+  if (S.inCar) {
+    speed = d > 300 ? POLICE_CAR.chaseFar : POLICE_CAR.chaseNear;
+    if (S.shot) speed = 330;
+  } else {
+    // On foot a police car closes in and stops short; it never deals
+    // contact damage to a player on foot.
+    if (d <= POLICE_CAR.stopRange) speed = 0;
+    else speed = POLICE_CAR.chaseFoot;
+    if (S.shot) speed = 330;
+  }
+  car.speed = speed;
+  const nx = car.x + Math.cos(car.angle) * speed * dt;
+  const ny = car.y + Math.sin(car.angle) * speed * dt;
+  const moved = moveCircle(car.x, car.y, nx - car.x, ny - car.y, 20);
+  car.x = moved.x;
+  car.y = moved.y;
+  car.siren += dt;
+  // Ramming the player's car damages it.
+  if (S.inCar && d < POLICE_CAR.ramRange) {
+    const driven = S.cars[S.carIndex];
+    if (driven && !driven.wrecked) {
+      let dmg = POLICE_CAR.ramDamage * dt;
+      if (Math.abs(driven.speed) > 60) dmg *= 0.5;
+      if (S.upgrades.includes('armoured')) dmg *= 0.6;
+      driven.health -= dmg;
+      S.camera.shake = Math.max(S.camera.shake, 3);
+      if (S.rng() < 0.1) spawnSparks(driven.x, driven.y, 3);
+      if (S.rng() < 0.05) playCrash();
+      if (driven.health <= 0) {
+        driven.health = 0;
+        driven.wrecked = true;
+        driven.speed = 0;
+        S.player.x = driven.x;
+        S.player.y = driven.y;
+        S.inCar = false;
+        S.carIndex = -1;
+        S.toast = { text: 'Car wrecked — find another', until: S.time + 4 };
+      }
     }
   }
+}
 
-  // Officers on foot: approach and shoot, or bust the player up close.
-  for (const o of state.officers) {
-    const d = dist(o.x, o.y, p.x, p.y);
-    const a = Math.atan2(p.y - o.y, p.x - o.x);
-    if (d < 42 && state.player.inCar === null) {
-      // Busted!
-      state.over = 'busted';
-      state.screen = 'busted';
-      sfx.busted(audio);
-      return;
-    }
-    if (d > 220) {
-      o.x += Math.cos(a) * 150 * dt;
-      o.y += Math.sin(a) * 150 * dt;
-    } else if (d > 90) {
-      o.x += Math.cos(a) * 70 * dt;
-      o.y += Math.sin(a) * 70 * dt;
-    }
-    o.shootCd -= dt;
-    if (d < 420 && o.shootCd <= 0 && state.player.inCar === null) {
-      o.shootCd = 1.4 + Math.random();
-      const spread = (Math.random() - 0.5) * 0.35;
-      state.bullets.push({
-        x: o.x, y: o.y, angle: a + spread, speed: 620, from: 'enemy',
-        life: 1.2, dmg: 6,
+function updateOfficer(off, dt) {
+  const p = S.player;
+  const d = dist(off.x, off.y, p.x, p.y);
+  let speed = 0;
+  if (d > OFFICER.farRange) speed = OFFICER.approachFar;
+  else if (d > OFFICER.nearRange) speed = OFFICER.approachNear;
+  else speed = 0;
+  if (speed > 0) {
+    const a = angleTo(off.x, off.y, p.x, p.y);
+    off.angle = a;
+    const pos = moveCircle(off.x, off.y, Math.cos(a) * speed * dt, Math.sin(a) * speed * dt, 12);
+    off.x = pos.x;
+    off.y = pos.y;
+  }
+  // Close enough on foot and Danny is busted.
+  if (!S.inCar && d <= OFFICER.bustRange && S.screen === 'play') {
+    S.screen = 'busted';
+    return;
+  }
+  // Officers shoot only at a player on foot, within range.
+  if (!S.inCar && d <= OFFICER.shootRange) {
+    off.cooldown -= dt;
+    if (off.cooldown <= 0) {
+      off.cooldown = OFFICER.cooldownMin + S.rng() * OFFICER.cooldownExtra;
+      const a = angleTo(off.x, off.y, p.x, p.y) + (S.rng() - 0.5) * 0.1;
+      S.enemyBullets.push({
+        x: off.x + Math.cos(a) * 20, y: off.y + Math.sin(a) * 20,
+        vx: Math.cos(a) * OFFICER.bulletSpeed, vy: Math.sin(a) * OFFICER.bulletSpeed,
+        life: 1.2, damage: OFFICER.bulletDamage, fromOfficer: true,
       });
-      sfx.enemyShoot(audio);
     }
   }
+}
 
-  // Wasted check.
-  if (state.player.hp <= 0 && !state.over) {
-    state.player.hp = 0;
-    state.over = 'wasted';
-    state.screen = 'wasted';
-    sfx.busted(audio);
+export function updatePolice(dt) {
+  updateDecay(dt);
+  matchPoliceCounts();
+  for (const car of S.police) updatePoliceCar(car, dt);
+  for (const off of S.officers) {
+    updateOfficer(off, dt);
+    if (S.screen !== 'play') return;
   }
-}
-
-function spawnPoliceCar(state, p) {
-  const a = Math.random() * Math.PI * 2;
-  const d = 700 + Math.random() * 300;
-  let x = Math.max(80, Math.min(WORLD.width - 80, p.x + Math.cos(a) * d));
-  let y = Math.max(80, Math.min(WORLD.height - 80, p.y + Math.sin(a) * d));
-  const car = {
-    x, y, angle: Math.atan2(p.y - y, p.x - x), speed: 200,
-    color: '#20242e', police: true, hp: 100, smoke: 0,
-  };
-  state.policeCars.push(car);
-  return car;
-}
-
-function spawnOfficer(state, p) {
-  const a = Math.random() * Math.PI * 2;
-  const d = 380 + Math.random() * 200;
-  const o = {
-    x: Math.max(60, Math.min(WORLD.width - 60, p.x + Math.cos(a) * d)),
-    y: Math.max(60, Math.min(WORLD.height - 60, p.y + Math.sin(a) * d)),
-    shootCd: 1 + Math.random(), color: '#20242e',
-  };
-  state.officers.push(o);
-  return o;
 }

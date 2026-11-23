@@ -1,24 +1,22 @@
-<!doctype html>
-<!-- Solmar Bay — the only page the game needs. One full-screen canvas,
-     one module script, no external requests: everything the game draws,
-     plays or shows comes from the files under src/. -->
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Solmar Bay — an original open-world crime game for the browser. Walk, steal cars, outrun the police, and run seven story missions across a sun-soaked coastal city.">
-<title>Solmar Bay — an open-world crime game</title>
+<meta name="theme-color" content="#0b1e3a">
+<title>Solmar Bay — a top-down open-world crime game</title>
+<meta name="description" content="Solmar Bay is a top-down 2D open-world crime game: Danny Vega takes on seven story missions across a 3600 by 2800 bay city, with driving, shooting, wanted levels, shops, side jobs and hidden packages.">
 <link rel="icon" href="data:,">
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #0e2a4a; }
-  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; }
-  /* Read aloud, never shown: the status line screen readers announce. */
-  #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #0b1e3a; }
+  #game { display: block; width: 100vw; height: 100vh; cursor: crosshair; }
+  #sr-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 </style>
 </head>
 <body>
-<canvas id="game" aria-label="Solmar Bay: an open-world crime game. Walk, steal cars, outrun the police, and run missions for Mara Solis."></canvas>
-<p id="status" role="status" aria-live="polite"></p>
+<canvas id="game" aria-label="Solmar Bay game canvas"></canvas>
+<div id="sr-status" aria-live="polite"></div>
+<noscript><p style="color:#fff;font-family:sans-serif;padding:24px">Solmar Bay needs JavaScript to run. Please enable JavaScript and reload the page.</p></noscript>
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>

@@ -1,177 +1,165 @@
-// Staged screenshot scenes for ?shot=start|drive|chase|mission|boss|shop.
-// Each one plays the real rules forward from a fresh world with a simple
-// autopilot, so the frame is what a short game really looks like and the
-// same seed always gives the same frame. Staging never draws a mock: every
-// staged frame is one the game can genuinely reach by playing.
-import { STEP } from './config.js';
-import { PLACES, resetWorld, addWanted } from './world.js';
-import { SCREEN_TITLE, SCREEN_PLAY } from './render.js';
+// Solmar Bay — the staged screenshot scenes. Each scene is a real
+// position the game can reach: the world is built fresh from seed 1,
+// the scene is set up, and the rules are played forward with a
+// simple autopilot for the scene's seconds. The frozen frame the
+// screenshot takes is therefore a genuine frame of play.
 
-const SAMPLE = 1 / 60;
+import { S, dist, angleTo, angleDiff, circleHitsBuilding } from './world.js';
+import { PLACES, M4_SPAWNS, BOSSES, RIVAL_HEALTH } from './config.js';
+import { INPUT } from './input.js';
+import { spawnEnemy, spawnBoss } from './combat.js';
+import { resetWorld } from './world.js';
 
-// Drive the player's car toward a target point, steering around buildings.
-function driveAutopilot(state, tx, ty) {
-  const car = state.player.inCar !== null ? state.cars[state.player.inCar] : null;
-  if (!car) return;
-  const dx = tx - car.x, dy = ty - car.y;
-  const want = Math.atan2(dy, dx);
-  let diff = want - car.angle;
-  while (diff > Math.PI) diff -= Math.PI * 2;
-  while (diff < -Math.PI) diff += Math.PI * 2;
-  // Steer: bias the angle directly (autopilot, not player input).
-  car.angle += Math.max(-2.2 * SAMPLE, Math.min(2.2 * SAMPLE, diff));
-  car.speed = Math.min(car.speed + 420 * SAMPLE, 300);
-  const nx = car.x + Math.cos(car.angle) * car.speed * SAMPLE;
-  const ny = car.y + Math.sin(car.angle) * car.speed * SAMPLE;
-  if (nx > 40 && nx < 3560 && ny > 40 && ny < 2760) {
-    const hit = state.buildings.some((b) => nx + 18 > b.x && nx - 18 < b.x + b.w && ny + 18 > b.y && ny - 18 < b.y + b.h);
-    if (!hit) { car.x = nx; car.y = ny; }
-    else { car.speed *= 0.4; car.angle += 0.6; }
-  }
-  state.player.x = car.x; state.player.y = car.y;
-  state.camera.x = car.x; state.camera.y = car.y;
-}
+export const SHOT_SECONDS = {
+  start: 2,
+  drive: 5,
+  chase: 4,
+  mission: 1.5,
+  boss: 1.5,
+  shop: 1.5,
+};
 
-// Simulate the world forward for `seconds`, optionally driving the player car.
-function simulate(state, seconds, driveTarget) {
-  const steps = Math.round(seconds / SAMPLE);
-  for (let i = 0; i < steps; i += 1) {
-    state.time += SAMPLE;
-    if (driveTarget) driveAutopilot(state, driveTarget.x, driveTarget.y);
-    // Keep traffic and peds moving for a living frame.
-    for (const c of state.cars) {
-      if (!c.traffic) continue;
-      c.x += Math.cos(c.angle) * c.speed * SAMPLE;
-      c.y += Math.sin(c.angle) * c.speed * SAMPLE;
-      if (c.x < 60 || c.x > 3540 || c.y < 60 || c.y > 2740) c.angle += Math.PI;
-    }
-    for (const p of state.peds) {
-      const a = p.angle;
-      p.x += Math.cos(a) * p.speed * SAMPLE;
-      p.y += Math.sin(a) * p.speed * SAMPLE;
-      if (p.x < 60 || p.x > 3540 || p.y < 60 || p.y > 2740) p.angle += Math.PI;
-    }
-    for (const pc of state.policeCars) {
-      const pp = state.player;
-      const a = Math.atan2(pp.y - pc.y, pp.x - pc.x);
-      let diff = a - pc.angle;
-      while (diff > Math.PI) diff -= Math.PI * 2;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      pc.angle += Math.max(-2.4 * SAMPLE, Math.min(2.4 * SAMPLE, diff));
-      pc.speed = 330;
-      pc.x += Math.cos(pc.angle) * pc.speed * SAMPLE;
-      pc.y += Math.sin(pc.angle) * pc.speed * SAMPLE;
-    }
+// The autopilot steers a car toward a point: at most 2.2 radians a
+// second, accelerating up to 300 speed, slowing and turning when the
+// next step would hit a building, staying inside the world.
+export function updateAutopilot(dt) {
+  void dt;
+  const target = S.shotTarget;
+  const car = S.inCar ? S.cars[S.carIndex] : null;
+  if (!car || !target) return;
+  const d = dist(car.x, car.y, target.x, target.y);
+  const desired = angleTo(car.x, car.y, target.x, target.y);
+  const diff = angleDiff(car.angle, desired);
+  INPUT.keys['KeyW'] = car.speed < 300 && d > 120;
+  INPUT.keys['KeyS'] = false;
+  INPUT.keys['KeyA'] = false;
+  INPUT.keys['KeyD'] = false;
+  if (diff > 0.08) INPUT.keys['KeyD'] = true;
+  else if (diff < -0.08) INPUT.keys['KeyA'] = true;
+  // A building ahead: slow down and turn toward the clearer side.
+  const aheadX = car.x + Math.cos(car.angle) * 90;
+  const aheadY = car.y + Math.sin(car.angle) * 90;
+  if (circleHitsBuilding(aheadX, aheadY, 24)) {
+    INPUT.keys['KeyW'] = false;
+    const leftX = car.x + Math.cos(car.angle - 0.7) * 90;
+    const leftY = car.y + Math.sin(car.angle - 0.7) * 90;
+    const rightX = car.x + Math.cos(car.angle + 0.7) * 90;
+    const rightY = car.y + Math.sin(car.angle + 0.7) * 90;
+    const leftClear = !circleHitsBuilding(leftX, leftY, 24);
+    const rightClear = !circleHitsBuilding(rightX, rightY, 24);
+    if (leftClear && !rightClear) INPUT.keys['KeyA'] = true;
+    else if (rightClear && !leftClear) INPUT.keys['KeyD'] = true;
+    else if (leftClear && rightClear) INPUT.keys['KeyA'] = true;
+    // Both sides blocked: back up instead of turning into a wall.
+    else INPUT.keys['KeyS'] = true;
   }
 }
 
-function putPlayerInCar(state, x, y, angle) {
-  const car = state.cars.find((c) => !c.traffic && !c.police) || state.cars[0];
-  car.x = x; car.y = y; car.angle = angle; car.parked = false; car.traffic = false;
+function putPlayerInCar(carIndex, x, y, angle) {
+  const car = S.cars[carIndex];
+  car.x = x;
+  car.y = y;
+  car.angle = angle;
   car.speed = 0;
-  state.player.inCar = car.id;
-  state.player.x = x; state.player.y = y;
-  state.camera.x = x; state.camera.y = y;
-  return car;
+  S.inCar = true;
+  S.carIndex = carIndex;
+  car.driver = true;
+  S.player.x = x;
+  S.player.y = y;
+  S.player.angle = angle;
 }
 
-/**
- * Set `world` to the named scene and return the screen to draw over it.
- */
-export function stageShot(name, world) {
-  resetWorld(world);
-  world.started = true;
+function findCarIndex(kind) {
+  for (let i = 0; i < S.cars.length; i++) {
+    if (S.cars[i].kind === kind) return i;
+  }
+  return -1;
+}
+
+// Set a scene up from a fresh world. Returns its staging seconds.
+export function setupShotScene(name) {
+  resetWorld(1);
+  S.shot = { name };
+  S.shotTarget = null;
+  const hideout = PLACES.hideout;
+  const cash = PLACES.harbourCash;
   if (name === 'start') {
-    // Title screen over a living downtown street.
-    world.player.x = 1125; world.player.y = 1125;
-    world.camera.x = 1125; world.camera.y = 1125;
-    simulate(world, 2, null);
-    return { screen: SCREEN_TITLE, best: 0 };
-  }
-  if (name === 'drive') {
-    world.missionIndex = 1;
-    world.missionState = { phase: 'drive', collected: [], spawned: false };
-    world.waypoint = { x: PLACES.hideout.x, y: PLACES.hideout.y, label: PLACES.hideout.label };
-    putPlayerInCar(world, 1125, 1230, Math.PI / 2);
-    simulate(world, 5, { x: 1125, y: 1900 });
-    return { screen: SCREEN_PLAY, best: 0 };
-  }
-  if (name === 'chase') {
-    world.missionIndex = 1;
-    world.missionState = { phase: 'drive', collected: [], spawned: false };
-    world.waypoint = { x: PLACES.hideout.x, y: PLACES.hideout.y, label: PLACES.hideout.label };
-    putPlayerInCar(world, 1575, 1575, 0);
-    addWanted(world, 3);
-    // Police cars close behind.
-    for (let i = 0; i < 3; i += 1) {
-      world.policeCars.push({
-        x: 1575 - 180 - i * 90, y: 1575 + (i % 2 === 0 ? 26 : -26),
-        angle: 0, speed: 330, color: '#20242e', police: true, hp: 100, smoke: 0,
+    S.player.x = 1125;
+    S.player.y = 1125;
+    S.player.angle = -Math.PI / 2;
+    S.screen = 'title';
+    S.camera.x = 1125;
+    S.camera.y = 1125;
+  } else if (name === 'drive') {
+    S.missionIndex = 1;
+    S.missionPhase = 'drive';
+    S.missionIntroShown = true;
+    const gi = findCarIndex('getaway');
+    putPlayerInCar(gi, 1125, 1230, Math.PI / 2);
+    S.waypoint = { x: hideout.x, y: hideout.y, label: 'Hideout' };
+    S.storyWaypoint = { x: hideout.x, y: hideout.y, label: 'Hideout' };
+    S.shotTarget = { x: 1125, y: 1900 };
+    S.screen = 'play';
+  } else if (name === 'chase') {
+    S.missionIndex = 1;
+    S.missionPhase = 'drive';
+    S.missionIntroShown = true;
+    const pi = findCarIndex('parked');
+    putPlayerInCar(pi, 1575, 1575, 0);
+    S.wantedPoints = 75;
+    S.police.length = 0;
+    for (let i = 0; i < 3; i++) {
+      S.police.push({
+        x: 1425 - i * 100, y: 1575, angle: 0, speed: 330, health: 100,
+        maxHealth: 100, color: '#1a1a2e', kind: 'police', driver: false,
+        wrecked: false, siren: i * 0.7,
       });
     }
-    simulate(world, 4, { x: 2475, y: 1575 });
-    return { screen: SCREEN_PLAY, best: 0 };
-  }
-  if (name === 'boss') {
-    // Rico boss fight at the Hideout: boss + minions + boss HP bar.
-    world.missionIndex = 5;
-    world.missionState = { phase: 'go', collected: [], spawned: true };
-    world.waypoint = { x: PLACES.hideout.x, y: PLACES.hideout.y, label: PLACES.hideout.label };
-    world.player.x = PLACES.hideout.x - 60;
-    world.player.y = PLACES.hideout.y + 140;
-    world.player.angle = -Math.PI / 2;
-    world.camera.x = world.player.x;
-    world.camera.y = world.player.y;
-    const boss = {
-      x: PLACES.hideout.x + 60, y: PLACES.hideout.y - 40, hp: 400, maxHp: 400,
-      shootCd: 1, color: '#5b1a5b', boss: true, name: 'RICO', kind: 'rico', minionsSpawned: false,
-    };
-    world.enemies.push(boss);
-    world.boss = boss;
-    for (const [x, y] of [[675, 1900], [850, 2025]]) {
-      world.enemies.push({ x, y, hp: 80, shootCd: 1, color: '#7a1f1f' });
+    S.waypoint = { x: hideout.x, y: hideout.y, label: 'Hideout' };
+    S.storyWaypoint = { x: hideout.x, y: hideout.y, label: 'Hideout' };
+    S.shotTarget = { x: 2475, y: 1575 };
+    S.screen = 'play';
+  } else if (name === 'mission' || name === 'boss') {
+    S.missionIndex = 5;
+    S.missionPhase = 'fight';
+    S.missionIntroShown = true;
+    S.player.x = hideout.x - 40;
+    S.player.y = hideout.y + 130;
+    S.player.angle = -Math.PI / 2;
+    S.camera.x = S.player.x;
+    S.camera.y = S.player.y;
+    spawnBoss(BOSSES.rico);
+    if (name === 'mission') {
+      for (const spot of M4_SPAWNS) {
+        spawnEnemy(spot.x, spot.y, { health: RIVAL_HEALTH, name: 'Rival', kind: 'rival' });
+      }
+    } else {
+      spawnEnemy(645, 2100, { health: RIVAL_HEALTH, name: 'Rival', kind: 'rival' });
+      spawnEnemy(825, 2100, { health: RIVAL_HEALTH, name: 'Rival', kind: 'rival' });
     }
-    world.bullets.push({ x: world.player.x + 10, y: world.player.y - 40, angle: -Math.PI / 2, speed: 760, from: 'player', life: 0.6, dmg: 34 });
-    simulate(world, 1.5, null);
-    return { screen: SCREEN_PLAY, best: 0 };
+    // One player bullet already in flight, toward Rico.
+    const a = angleTo(S.player.x, S.player.y, 735, 2040);
+    S.bullets.push({
+      x: S.player.x + Math.cos(a) * 22,
+      y: S.player.y + Math.sin(a) * 22,
+      vx: Math.cos(a) * 760,
+      vy: Math.sin(a) * 760,
+      life: 1.1,
+      damage: 34,
+    });
+    S.waypoint = { x: hideout.x, y: hideout.y, label: 'Hideout' };
+    S.storyWaypoint = { x: hideout.x, y: hideout.y, label: 'Hideout' };
+    S.screen = 'play';
+  } else if (name === 'shop') {
+    S.player.x = PLACES.gunstore.x - 40;
+    S.player.y = PLACES.gunstore.y + 60;
+    S.player.angle = -Math.PI / 2;
+    S.money = 1250;
+    S.shopOpen = 'gunstore';
+    S.shopSel = 0;
+    S.camera.x = S.player.x;
+    S.camera.y = S.player.y;
+    S.screen = 'play';
   }
-  if (name === 'shop') {
-    // Lena's gun store: shop panel open over a living street.
-    world.missionIndex = 1;
-    world.player.x = PLACES.gunstore.x - 40;
-    world.player.y = PLACES.gunstore.y + 60;
-    world.player.angle = 0;
-    world.player.money = 1250;
-    world.camera.x = world.player.x;
-    world.camera.y = world.player.y;
-    world.shop = { shopId: 'gunstore', sel: 0 };
-    simulate(world, 1.5, null);
-    return { screen: SCREEN_PLAY, best: 0 };
-  }
-  // mission: Rico boss fight, mission 6, boss + minions + objective visible.
-  world.missionIndex = 5;
-  world.missionState = { phase: 'go', collected: [], spawned: true };
-  world.waypoint = { x: PLACES.hideout.x, y: PLACES.hideout.y, label: PLACES.hideout.label };
-  world.player.x = PLACES.hideout.x - 40;
-  world.player.y = PLACES.hideout.y + 130;
-  world.player.angle = -Math.PI / 2;
-  world.camera.x = world.player.x;
-  world.camera.y = world.player.y;
-  const boss = {
-    x: PLACES.hideout.x + 60, y: PLACES.hideout.y - 40, hp: 400, maxHp: 400,
-    shootCd: 1, color: '#5b1a5b', boss: true, name: 'RICO', kind: 'rico', minionsSpawned: false,
-  };
-  world.enemies.push(boss);
-  world.boss = boss;
-  // Rival crew minions on the roads around the hideout — never inside a building.
-  const spots = [
-    [675, 1900], [675, 2260], [500, 2025],
-    [850, 2025], [450, 2025], [900, 2025],
-  ];
-  for (const [x, y] of spots) {
-    world.enemies.push({ x, y, hp: 100, shootCd: 1, color: '#7a1f1f' });
-  }
-  world.bullets.push({ x: world.player.x + 10, y: world.player.y - 40, angle: -Math.PI / 2, speed: 760, from: 'player', life: 0.6, dmg: 34 });
-  simulate(world, 1.5, null);
-  return { screen: SCREEN_PLAY, best: 0 };
+  return SHOT_SECONDS[name] || 1.5;
 }

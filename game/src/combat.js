@@ -1,158 +1,257 @@
-// Shooting: player pistol (mouse aim, click/Space), enemy fire, bullets,
-// muzzle flash, hit feedback, enemy health bars.
-// The pistol only fires on foot — a driving player cannot shoot — and a
-// bullet dies on the first building it hits, so there is no shooting
-// through walls.
-import { BULLET_SPEED } from './config.js';
-import { hitBuilding, dist, addParticles, addWanted, addToast, playerPos, nearestPoliceDist } from './world.js';
-import { isDown, wasPressed } from './input.js';
-import { sfx } from './audio.js';
-import { scarePeds } from './pedestrians.js';
-import { pistolDamage, fireInterval, carDamageFactor } from './upgrades.js';
+// Solmar Bay — shooting and combat. Danny shoots on foot only.
+// Enemies and officers shoot back. Bullets die on walls, and a
+// player bullet spends itself on the first thing it hits.
 
-export function updateCombat(state, dt, audio) {
-  const p = state.player;
+import { S, dist, angleTo, circleHitsBuilding, moveCircle, spawnSparks, spawnSmoke } from './world.js';
+import { GUN, ENEMY, WANTED, MINION_HEALTH, MINION_OFFSET_X, MINION_OFFSET_Y } from './config.js';
+import { INPUT, keyHeld } from './input.js';
+import { addWantedStars, addWantedPoints } from './police.js';
+import { scarePedestrians } from './pedestrians.js';
+import { playGunshot, playEnemyShot, playPickup } from './audio.js';
+import { wreckDrivenCar } from './vehicles.js';
 
-  // Player shooting (on foot only; driving players can't shoot).
-  if (p.inCar === null && state.screen === 'play') {
-    const wantShoot = (inputWantsShoot(state)) && p.shootCd <= 0 && p.ammo > 0;
-    if (wantShoot) {
-      p.shootCd = fireInterval(state);
-      p.ammo -= 1;
-      state.stats.shots += 1;
-      const a = p.angle + (Math.random() - 0.5) * 0.06;
-      state.bullets.push({
-        x: p.x + Math.cos(a) * 22, y: p.y + Math.sin(a) * 22,
-        angle: a, speed: BULLET_SPEED, from: 'player', life: 1.1, dmg: pistolDamage(state),
-      });
-      addParticles(state, p.x + Math.cos(a) * 26, p.y + Math.sin(a) * 26, '#ffd94d', 3, 160);
-      sfx.shoot(audio);
-      scarePeds(state, p.x, p.y, 420);
-      // Gunfire only draws heat if the police are close enough to hear it,
-      // and at most once every 5 s — a firefight is one incident, not one
-      // wanted star per bullet.
-      if (nearestPoliceDist(state) < 500 && state.time - (state.lastHeatAt || -99) > 5) {
-        state.lastHeatAt = state.time;
-        addWanted(state, 0.5);
-      }
-    }
+// Make one enemy. Every field a caller might read is present:
+// kind, type, name, boss, minion, bounty and visible alike.
+export function makeEnemy(x, y, opts) {
+  const o = opts || {};
+  return {
+    x, y,
+    angle: o.angle || 0,
+    health: o.health || 100,
+    maxHealth: o.health || 100,
+    name: o.name || 'Rival',
+    kind: o.kind || 'rival',
+    type: o.kind || 'rival',
+    boss: !!o.boss,
+    isBoss: !!o.boss,
+    minion: !!o.minion,
+    bounty: !!o.bounty,
+    visible: true,
+    speed: ENEMY.walkSpeed,
+    cooldown: 1 + S.rng(),
+    calledMinions: false,
+    damage: o.boss ? ENEMY.bossBulletDamage : ENEMY.bulletDamage,
+  };
+}
+
+export function spawnEnemy(x, y, opts) {
+  const e = makeEnemy(x, y, opts);
+  S.enemies.push(e);
+  return e;
+}
+
+export function spawnBoss(def) {
+  const place = def.spawn;
+  const base = { hideout: { x: 675, y: 2080 }, harbourCash: { x: 450, y: 2560 } }[place];
+  const e = makeEnemy(base.x + def.dx, base.y + def.dy, {
+    health: def.health, name: def.name, kind: 'boss', boss: true,
+  });
+  S.enemies.push(e);
+  S.boss = e;
+  return e;
+}
+
+// The boss calls two minions the first time it drops below half.
+function maybeCallMinions(boss) {
+  if (!boss.boss || boss.calledMinions) return;
+  if (boss.health * 2 >= boss.maxHealth) return;
+  boss.calledMinions = true;
+  for (const side of [-1, 1]) {
+    spawnEnemy(boss.x + side * MINION_OFFSET_X, boss.y + MINION_OFFSET_Y, {
+      health: MINION_HEALTH, name: 'Minion', kind: 'minion', minion: true,
+    });
   }
+  S.toast = { text: `${boss.name} called in backup!`, until: S.time + 4 };
+}
 
-  // Enemy shooting (rival crew): aim at the player, inaccurate.
-  // Bosses fire a 3-bullet spread and shoot a little faster.
-  for (const e of state.enemies) {
-    if (e.hp <= 0) continue;
-    const pp = playerPos(state);
-    const d = dist(e.x, e.y, pp.x, pp.y);
-    e.shootCd -= dt;
-    if (d < 520 && e.shootCd <= 0) {
-      e.shootCd = e.boss ? 1.1 + Math.random() * 0.6 : 1.3 + Math.random() * 0.9;
-      const a = Math.atan2(pp.y - e.y, pp.x - e.x) + (Math.random() - 0.5) * 0.35;
-      const shots = e.boss ? [-0.22, 0, 0.22] : [0];
-      for (const off of shots) {
-        state.bullets.push({ x: e.x, y: e.y, angle: a + off, speed: 560, from: 'enemy', life: 1.2, dmg: e.boss ? 9 : 6 });
-      }
-      sfx.enemyShoot(audio);
-    }
-    // Enemies shuffle toward the player when far.
-    if (d > 260) {
-      const a = Math.atan2(pp.y - e.y, pp.x - e.x);
-      const nx = e.x + Math.cos(a) * 55 * dt;
-      const ny = e.y + Math.sin(a) * 55 * dt;
-      if (!hitBuilding(state, nx, ny, 12)) { e.x = nx; e.y = ny; }
-    }
+function killEnemy(enemy) {
+  enemy.health = 0;
+  S.stats.kills++;
+  spawnSparks(enemy.x, enemy.y, 10);
+  spawnSmoke(enemy.x, enemy.y, 4);
+  const i = S.enemies.indexOf(enemy);
+  if (i >= 0) S.enemies.splice(i, 1);
+  if (enemy === S.boss) {
+    S.boss = null;
+    S.bossesBeaten++;
+    S.toast = { text: `${enemy.name} is down!`, until: S.time + 4 };
+    playPickup();
   }
+}
 
-  // Bullets move and hit things.
-  for (let i = state.bullets.length - 1; i >= 0; i -= 1) {
-    const b = state.bullets[i];
-    b.x += Math.cos(b.angle) * b.speed * dt;
-    b.y += Math.sin(b.angle) * b.speed * dt;
+// Danny fires the pistol: on foot, with ammunition, on the clock.
+function playerShoot(dt) {
+  const p = S.player;
+  if (S.inCar || S.screen !== 'play') return;
+  const wantFire = INPUT.mouseDown || keyHeld('Space');
+  if (!wantFire || p.fireCooldown > 0) return;
+  if (p.ammo <= 0) return;
+  const interval = p.fireInterval;
+  const damage = p.damage;
+  p.fireCooldown = interval;
+  p.ammo--;
+  S.stats.shots++;
+  const a = p.angle + (S.rng() - 0.5) * 2 * GUN.spread;
+  S.bullets.push({
+    x: p.x + Math.cos(a) * GUN.muzzleOffset,
+    y: p.y + Math.sin(a) * GUN.muzzleOffset,
+    vx: Math.cos(a) * GUN.bulletSpeed,
+    vy: Math.sin(a) * GUN.bulletSpeed,
+    life: GUN.bulletLife,
+    damage,
+  });
+  playGunshot();
+  scarePedestrians(p.x, p.y);
+  // Gunfire counts as one incident when the police are near.
+  let near = Infinity;
+  for (const car of S.police) near = Math.min(near, dist(p.x, p.y, car.x, car.y));
+  for (const off of S.officers) near = Math.min(near, dist(p.x, p.y, off.x, off.y));
+  if (near <= WANTED.gunfireRange && S.time - S.lastGunfireWanted >= WANTED.gunfireCooldown) {
+    S.lastGunfireWanted = S.time;
+    addWantedPoints(WANTED.pointsPerStar / 2);
+  }
+}
+
+function updatePlayerBullets(dt) {
+  const p = S.player;
+  for (let i = S.bullets.length - 1; i >= 0; i--) {
+    const b = S.bullets[i];
+    b.x += b.vx * dt;
+    b.y += b.vy * dt;
     b.life -= dt;
     let dead = b.life <= 0;
-    if (!dead && hitBuilding(state, b.x, b.y, 2)) {
-      addParticles(state, b.x, b.y, '#c9c9c9', 4, 120);
-      dead = true;
+    if (!dead && circleHitsBuilding(b.x, b.y, 2)) dead = true;
+    if (!dead) {
+      // Enemies first.
+      for (const e of [...S.enemies]) {
+        if (dist(b.x, b.y, e.x, e.y) <= GUN.hitRange) {
+          e.health -= b.damage;
+          S.stats.hits++;
+          spawnSparks(b.x, b.y, 3);
+          if (e.health <= 0) killEnemy(e);
+          else maybeCallMinions(e);
+          dead = true;
+          break;
+        }
+      }
     }
-    if (!dead && b.from === 'player') {
-      // Hit an enemy.
-      for (const e of state.enemies) {
-        if (e.hp > 0 && dist(b.x, b.y, e.x, e.y) < 18) {
-          e.hp -= b.dmg;
-          state.stats.hits += 1;
-          addParticles(state, b.x, b.y, '#e74c3c', 6, 160);
-          if (e.hp <= 0) {
-            state.stats.kills += 1;
-            if (e.boss) {
-              state.bossesDown = (state.bossesDown || 0) + 1;
-              if (state.boss === e) state.boss = null;
-              addToast(state, `${e.name} is down!`);
-              sfx.jingle(audio);
-            }
-            addParticles(state, e.x, e.y, '#e74c3c', 16, 260);
+    if (!dead) {
+      for (const ped of S.pedestrians) {
+        if (dist(b.x, b.y, ped.x, ped.y) <= GUN.pedHitRange) {
+          ped.flee = 3;
+          const a = angleTo(p.x, p.y, ped.x, ped.y);
+          ped.fleeX = Math.cos(a);
+          ped.fleeY = Math.sin(a);
+          S.stats.pedsHit++;
+          addWantedStars(1);
+          dead = true;
+          break;
+        }
+      }
+    }
+    if (!dead) {
+      for (let j = S.police.length - 1; j >= 0; j--) {
+        const car = S.police[j];
+        if (dist(b.x, b.y, car.x, car.y) <= GUN.policeHitRange) {
+          car.health -= b.damage;
+          S.stats.hits++;
+          addWantedStars(1);
+          spawnSparks(b.x, b.y, 3);
+          if (car.health <= 0) {
+            S.police.splice(j, 1);
+            addWantedStars(1);
+            S.toast = { text: 'Police car destroyed', until: S.time + 3 };
           }
           dead = true;
           break;
         }
       }
-      // Hit a pedestrian (a crime — the player chose this).
-      if (!dead) {
-        for (const ped of state.peds) {
-          if (dist(b.x, b.y, ped.x, ped.y) < 14) {
-            ped.flee = 4; ped.fx = b.x; ped.fy = b.y;
-            state.stats.pedsHit += 1;
-            addWanted(state, 1);
-            addParticles(state, ped.x, ped.y, '#e74c3c', 8, 160);
-            dead = true;
-            break;
-          }
-        }
-      }
-      // Hit a police car / officer.
-      if (!dead) {
-        for (const c of state.policeCars) {
-          if (dist(b.x, b.y, c.x, c.y) < 24) {
-            c.hp -= b.dmg;
-            addWanted(state, 1);
-            addParticles(state, b.x, b.y, '#ffb347', 6, 160);
-            if (c.hp <= 0) {
-              c.hp = 0;
-              addParticles(state, c.x, c.y, '#555', 20, 220);
-              state.policeCars.splice(state.policeCars.indexOf(c), 1);
-              addWanted(state, 1);
-            }
-            dead = true;
-            break;
-          }
-        }
-      }
     }
-    if (!dead && b.from === 'enemy') {
-      const pp = playerPos(state);
-      const inCar = state.player.inCar !== null;
-      if (dist(b.x, b.y, pp.x, pp.y) < (inCar ? 26 : 15)) {
-        if (inCar) {
-          const car = state.cars[state.player.inCar];
-          car.hp -= b.dmg * carDamageFactor(state);
-          if (car.hp <= 0) { car.hp = 0; }
-        } else if (state.player.invuln <= 0) {
-          state.player.hp -= b.dmg;
-          state.player.invuln = 0.25;
-        }
-        addParticles(state, b.x, b.y, '#e74c3c', 4, 120);
-        dead = true;
-      }
-    }
-    if (dead) state.bullets.splice(i, 1);
-  }
-
-  // Remove dead enemies.
-  for (let i = state.enemies.length - 1; i >= 0; i -= 1) {
-    if (state.enemies[i].hp <= 0) state.enemies.splice(i, 1);
+    if (dead) S.bullets.splice(i, 1);
   }
 }
 
-// The shoot input lives on the shared input object (set by main.js).
-let shootHeld = false;
-export function setShootHeld(v) { shootHeld = v; }
-function inputWantsShoot() { return shootHeld; }
+function damagePlayer(amount) {
+  const p = S.player;
+  if (p.invuln > 0 || S.screen !== 'play') return;
+  p.health -= amount;
+  p.invuln = ENEMY.invulnTime;
+  if (p.health < 0) p.health = 0;
+}
+
+function updateEnemyBullets(dt) {
+  const p = S.player;
+  for (let i = S.enemyBullets.length - 1; i >= 0; i--) {
+    const b = S.enemyBullets[i];
+    b.x += b.vx * dt;
+    b.y += b.vy * dt;
+    b.life -= dt;
+    let dead = b.life <= 0;
+    if (!dead && circleHitsBuilding(b.x, b.y, 2)) dead = true;
+    if (!dead && !S.inCar) {
+      if (dist(b.x, b.y, p.x, p.y) <= ENEMY.playerHitRange) {
+        damagePlayer(b.damage);
+        dead = true;
+      }
+    }
+    if (!dead && S.inCar) {
+      const car = S.cars[S.carIndex];
+      if (car && dist(b.x, b.y, car.x, car.y) <= ENEMY.carHitRange) {
+        let dmg = b.damage;
+        if (S.upgrades.includes('armoured')) dmg *= 0.6;
+        car.health -= dmg;
+        if (car.health <= 0) {
+          car.health = 0;
+          wreckDrivenCar('Car wrecked — find another');
+        }
+        dead = true;
+      }
+    }
+    if (dead) S.enemyBullets.splice(i, 1);
+  }
+}
+
+// One enemy's turn: walk in when far, shoot when Danny is close.
+function updateEnemy(e, dt) {
+  const p = S.player;
+  const d = dist(e.x, e.y, p.x, p.y);
+  if (d > ENEMY.stopRange) {
+    const a = angleTo(e.x, e.y, p.x, p.y);
+    e.angle = a;
+    const pos = moveCircle(e.x, e.y, Math.cos(a) * ENEMY.walkSpeed * dt, Math.sin(a) * ENEMY.walkSpeed * dt, 12);
+    e.x = pos.x;
+    e.y = pos.y;
+  }
+  if (d > ENEMY.shootRange) return;
+  e.cooldown -= dt;
+  if (e.cooldown > 0) return;
+  if (e.boss) {
+    e.cooldown = ENEMY.bossCooldownMin + S.rng() * (ENEMY.bossCooldownMax - ENEMY.bossCooldownMin);
+    const base = angleTo(e.x, e.y, p.x, p.y);
+    for (const off of [-ENEMY.bossSpread, 0, ENEMY.bossSpread]) {
+      const a = base + off;
+      S.enemyBullets.push({
+        x: e.x + Math.cos(a) * 22, y: e.y + Math.sin(a) * 22,
+        vx: Math.cos(a) * ENEMY.bulletSpeed, vy: Math.sin(a) * ENEMY.bulletSpeed,
+        life: ENEMY.bulletLife, damage: ENEMY.bossBulletDamage, fromBoss: true,
+      });
+    }
+    playEnemyShot();
+  } else {
+    e.cooldown = ENEMY.cooldownMin + S.rng() * (ENEMY.cooldownMax - ENEMY.cooldownMin);
+    const a = angleTo(e.x, e.y, p.x, p.y) + (S.rng() - 0.5) * 2 * ENEMY.spread;
+    S.enemyBullets.push({
+      x: e.x + Math.cos(a) * 22, y: e.y + Math.sin(a) * 22,
+      vx: Math.cos(a) * ENEMY.bulletSpeed, vy: Math.sin(a) * ENEMY.bulletSpeed,
+      life: ENEMY.bulletLife, damage: ENEMY.bulletDamage, fromRival: true,
+    });
+    playEnemyShot();
+  }
+}
+
+export function updateCombat(dt) {
+  playerShoot(dt);
+  updatePlayerBullets(dt);
+  updateEnemyBullets(dt);
+  for (const e of [...S.enemies]) updateEnemy(e, dt);
+}

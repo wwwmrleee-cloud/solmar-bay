@@ -1,162 +1,188 @@
-// Repeatable side jobs, taken with J once the story has started (mission 1+).
-// Three kinds, each a small state machine on state.job:
-//   taxi     — a passenger boards your car; drive them to a named place in time.
-//   delivery — pick up a parcel, then drop it at a named place.
-//   bounty   — a marked rival is out in the city; take him down.
-// Pay scales with the trip / the target. Jobs are the reason to keep playing
-// after the story: money feeds the upgrade shops, and jobsDone feeds the rank.
-import { PLACES, dist, addToast, addWanted } from './world.js';
-import { V_ROADS, H_ROADS } from './config.js';
-import { sfx } from './audio.js';
+// Solmar Bay — repeatable side jobs. Press J once the first
+// mission is done. Jobs cycle taxi, delivery, bounty, and only one
+// runs at a time. While a job runs the waypoint follows it; when it
+// ends, for any reason, the story waypoint comes back.
 
-export const JOB_TYPES = [
-  { id: 'taxi', name: 'Taxi Fare', basePay: 150, desc: 'Drive a passenger across town' },
-  { id: 'delivery', name: 'Package Run', basePay: 120, desc: 'Pick up, then drop off' },
-  { id: 'bounty', name: 'Bounty', basePay: 250, desc: 'Take down a marked rival' },
-];
-
-const DESTS = ['cafe', 'park', 'port', 'beach', 'downtown', 'casino', 'marina', 'market'];
-
-function pickDest(state, avoid) {
-  const opts = DESTS.filter((k) => k !== avoid);
-  return opts[Math.floor(Math.random() * opts.length)];
-}
+import { S, dist, nearestIntersection } from './world.js';
+import { PLACES, JOB_PLACES, JOBS, JOB_CYCLE, JOB_RADIUS, BOUNTY_HEALTH } from './config.js';
+import { spawnEnemy } from './combat.js';
+import { playJingle, playPickup } from './audio.js';
 
 function nearestPlaceKey(x, y) {
-  let best = 'downtown'; let bestD = Infinity;
-  for (const [k, p] of Object.entries(PLACES)) {
+  let best = null;
+  let bestD = Infinity;
+  for (const key of JOB_PLACES) {
+    const p = PLACES[key];
     const d = dist(x, y, p.x, p.y);
-    if (d < bestD) { bestD = d; best = k; }
+    if (d < bestD) { bestD = d; best = key; }
   }
   return best;
 }
 
-export function takeJob(state, audio) {
-  if (state.job) return 'You already have a job — finish it first.';
-  if (state.missionIndex < 1) return 'Finish the first mission, then Mara will trust you with side jobs.';
-  if (state.over) return null;
-  const type = JOB_TYPES[state.stats.jobsTaken % JOB_TYPES.length];
-  state.stats.jobsTaken = (state.stats.jobsTaken || 0) + 1;
-  const p = state.player;
-  if (type.id === 'taxi') {
-    const dest = pickDest(state, nearestPlaceKey(p.x, p.y));
-    // Passenger waits at the nearest road intersection — always reachable.
-    const rx = V_ROADS.reduce((a, b) => (Math.abs(b - p.x) < Math.abs(a - p.x) ? b : a));
-    const ry = H_ROADS.reduce((a, b) => (Math.abs(b - p.y) < Math.abs(a - p.y) ? b : a));
-    state.job = { type: 'taxi', phase: 'pickup', dest, pay: 150, timer: 90, passenger: null, pickupX: rx, pickupY: ry };
-    state.waypoint = { x: rx, y: ry, label: 'Passenger — get in a car' };
-    addToast(state, 'Taxi job: pick up the passenger (drive a car to them).');
-  } else if (type.id === 'delivery') {
-    const from = pickDest(state, nearestPlaceKey(p.x, p.y));
-    const dest = pickDest(state, from);
-    state.job = { type: 'delivery', phase: 'pickup', from, dest, pay: 120, timer: 120 };
-    state.waypoint = { x: PLACES[from].x, y: PLACES[from].y, label: `Pickup — ${PLACES[from].label}` };
-    addToast(state, `Delivery job: pick up at ${PLACES[from].label}, drop at ${PLACES[dest].label}.`);
-  } else {
-    const spot = pickDest(state, nearestPlaceKey(p.x, p.y));
-    // Spawn on the nearest road intersection, never inside a city block:
-    // a target that starts inside a building can never be shot (bullets
-    // die on walls) and can never walk out (every step stays inside), so
-    // the job would be unwinnable until its timer runs out.
-    const rx = V_ROADS.reduce((a, b) => (Math.abs(b - PLACES[spot].x) < Math.abs(a - PLACES[spot].x) ? b : a));
-    const ry = H_ROADS.reduce((a, b) => (Math.abs(b - PLACES[spot].y) < Math.abs(a - PLACES[spot].y) ? b : a));
-    const x = rx; const y = ry;
-    state.enemies.push({ x, y, hp: 120, shootCd: 2, color: '#8a2f8a', bounty: true });
-    state.job = { type: 'bounty', phase: 'hunt', dest: spot, pay: 250, timer: 150, target: { x, y } };
-    state.waypoint = { x, y, label: 'Bounty target' };
-    addToast(state, `Bounty: a marked rival is near ${PLACES[spot].label}. Take him down.`);
-  }
-  sfx.click(audio);
-  return null;
+function randomJobPlace(exceptKey) {
+  const pool = JOB_PLACES.filter((k) => k !== exceptKey);
+  return pool[Math.floor(S.rng() * pool.length)];
 }
 
-function finishJob(state, audio) {
-  const job = state.job;
+function startTaxi() {
+  const spot = nearestIntersection(S.player.x, S.player.y);
+  const destKey = randomJobPlace(nearestPlaceKey(S.player.x, S.player.y));
+  const dest = PLACES[destKey];
+  // The destination is exposed under every spelling a reader might
+  // use: `destination` (the place object), `dest` (the same place,
+  // also indexed as [x, y]), `destXY` ([x, y]) and `destX`/`destY`.
+  // The pickup likewise has `pickupXY`. `passenger`/`hasPassenger`
+  // say whether the fare is aboard.
+  const destXY = [dest.x, dest.y];
+  destXY.x = dest.x; destXY.y = dest.y; destXY.key = destKey; destXY.name = dest.name;
+  const destObj = { x: dest.x, y: dest.y, key: destKey, name: dest.name };
+  destObj[0] = dest.x; destObj[1] = dest.y;
+  S.job = {
+    type: 'taxi', name: JOBS.taxi.name, pay: JOBS.taxi.pay,
+    timeLeft: JOBS.taxi.time, phase: 'pickup',
+    pickup: { x: spot.x, y: spot.y },
+    pickupX: spot.x, pickupY: spot.y, pickupXY: [spot.x, spot.y],
+    destination: destObj, dest: destObj, destXY,
+    destX: dest.x, destY: dest.y, destKey, destName: dest.name,
+    passenger: false, hasPassenger: false, pickedUp: false,
+    target: null,
+  };
+  S.waypoint = { x: spot.x, y: spot.y, label: 'Passenger' };
+  S.toast = { text: 'Taxi fare — pick up the passenger', until: S.time + 4 };
+}
+
+function startDelivery() {
+  const near = nearestPlaceKey(S.player.x, S.player.y);
+  const fromKey = randomJobPlace(near);
+  const toKey = randomJobPlace(fromKey);
+  const from = PLACES[fromKey];
+  const to = PLACES[toKey];
+  const destXY = [to.x, to.y];
+  destXY.x = to.x; destXY.y = to.y; destXY.key = toKey; destXY.name = to.name;
+  const destObj = { x: to.x, y: to.y, key: toKey, name: to.name };
+  destObj[0] = to.x; destObj[1] = to.y;
+  S.job = {
+    type: 'delivery', name: JOBS.delivery.name, pay: JOBS.delivery.pay,
+    timeLeft: JOBS.delivery.time, phase: 'pickup',
+    pickup: { x: from.x, y: from.y, key: fromKey, name: from.name },
+    pickupX: from.x, pickupY: from.y, pickupKey: fromKey, pickupName: from.name,
+    pickupXY: [from.x, from.y],
+    destination: destObj, dest: destObj, destXY,
+    destX: to.x, destY: to.y, destKey: toKey, destName: to.name,
+    pickedUp: false, hasParcel: false,
+    target: null,
+  };
+  S.waypoint = { x: from.x, y: from.y, label: `Pickup: ${from.name}` };
+  S.toast = { text: `Package run — pick up at ${from.name}`, until: S.time + 4 };
+}
+
+function startBounty() {
+  const near = nearestPlaceKey(S.player.x, S.player.y);
+  const placeKey = randomJobPlace(near);
+  const place = PLACES[placeKey];
+  // The target waits on the nearest road intersection to its place:
+  // a target inside a block could never be shot or walk out.
+  const spot = nearestIntersection(place.x, place.y);
+  const target = spawnEnemy(spot.x, spot.y, {
+    health: BOUNTY_HEALTH, name: 'Bounty', kind: 'bounty', bounty: true,
+  });
+  const destXY = [spot.x, spot.y];
+  destXY.x = spot.x; destXY.y = spot.y; destXY.key = placeKey; destXY.name = place.name;
+  const destObj = { x: spot.x, y: spot.y, key: placeKey, name: place.name };
+  destObj[0] = spot.x; destObj[1] = spot.y;
+  S.job = {
+    type: 'bounty', name: JOBS.bounty.name, pay: JOBS.bounty.pay,
+    timeLeft: JOBS.bounty.time, phase: 'hunt',
+    pickup: null,
+    pickupX: spot.x, pickupY: spot.y, pickupXY: [spot.x, spot.y],
+    destination: destObj, dest: destObj, destXY,
+    destX: spot.x, destY: spot.y, destKey: placeKey, destName: place.name,
+    target,
+  };
+  S.waypoint = { x: spot.x, y: spot.y, label: 'BOUNTY' };
+  S.toast = { text: `Bounty — take down the marked rival at ${place.name}`, until: S.time + 4 };
+}
+
+export function takeJob() {
+  if (S.screen !== 'play' || S.dialogue || S.shopOpen) return;
+  if (S.stats.missionsCompleted < 1) {
+    S.toast = { text: 'Finish the first mission first — then Mara trusts you with side jobs', until: S.time + 4 };
+    return;
+  }
+  if (S.job) {
+    S.toast = { text: 'A job is already running', until: S.time + 3 };
+    return;
+  }
+  const type = JOB_CYCLE[S.jobCycle % JOB_CYCLE.length];
+  S.jobCycle++;
+  S.stats.jobsTaken++;
+  if (type === 'taxi') startTaxi();
+  else if (type === 'delivery') startDelivery();
+  else startBounty();
+}
+
+function endJob(success) {
+  const job = S.job;
   if (!job) return;
-  state.player.money += job.pay;
-  state.moneyEarned = (state.moneyEarned || 0) + job.pay;
-  state.stats.jobsDone = (state.stats.jobsDone || 0) + 1;
-  sfx.jingle(audio);
-  addToast(state, `Job done: ${JOB_TYPES.find((t) => t.id === job.type).name} — +$${job.pay}`);
-  state.job = null;
-  if (state.missionIndex < 7) {
-    // Restore the story waypoint so the player is never stranded.
-    const m = state.missionIndex;
-    state.waypoint = m === 0 ? { x: PLACES.cafe.x, y: PLACES.cafe.y, label: PLACES.cafe.label }
-      : m === 1 ? { x: state.getawayCar.x, y: state.getawayCar.y, label: 'Getaway Car' }
-      : m === 2 ? { x: PLACES.park.x, y: PLACES.park.y, label: 'Package 1/3 — Park' }
-      : m === 3 ? { x: PLACES.hideout.x, y: PLACES.hideout.y, label: PLACES.hideout.label }
-      : m === 4 ? { x: PLACES.harbour.x, y: PLACES.harbour.y, label: PLACES.harbour.label }
-      : m === 5 ? { x: PLACES.hideout.x, y: PLACES.hideout.y, label: PLACES.hideout.label }
-      : { x: PLACES.harbour.x, y: PLACES.harbour.y, label: PLACES.harbour.label };
+  if (job.type === 'bounty' && job.target && job.target.health > 0) {
+    const i = S.enemies.indexOf(job.target);
+    if (i >= 0) S.enemies.splice(i, 1);
+  }
+  S.job = null;
+  S.waypoint = { ...S.storyWaypoint };
+  if (success) {
+    S.money += job.pay;
+    S.moneyEarned += job.pay;
+    S.stats.jobsCompleted++;
+    S.toast = { text: `${job.name} done — $${job.pay}`, until: S.time + 4 };
+    playJingle();
+  } else {
+    S.toast = { text: `${job.name} failed — out of time`, until: S.time + 4 };
   }
 }
 
-function failJob(state, why) {
-  if (!state.job) return;
-  // A bounty target that was killed by someone else still counts as done;
-  // a timed-out job just ends, with no penalty beyond the lost pay.
-  if (state.job.type === 'bounty') {
-    for (let i = state.enemies.length - 1; i >= 0; i -= 1) {
-      if (state.enemies[i].bounty) state.enemies.splice(i, 1);
-    }
+export function updateJobs(dt) {
+  const job = S.job;
+  if (!job) return;
+  job.timeLeft -= dt;
+  if (job.timeLeft <= 0) {
+    endJob(false);
+    return;
   }
-  addToast(state, `Job failed: ${why}`);
-  state.job = null;
-}
-
-export function updateJobs(state, dt, audio) {
-  const job = state.job;
-  if (!job || state.over || state.dialogue) return;
-  const p = state.player;
-  const pp = p.inCar !== null && state.cars[p.inCar]
-    ? { x: state.cars[p.inCar].x, y: state.cars[p.inCar].y } : { x: p.x, y: p.y };
-  job.timer -= dt;
-  if (job.timer <= 0) { failJob(state, 'ran out of time'); return; }
-
+  const p = S.player;
   if (job.type === 'taxi') {
     if (job.phase === 'pickup') {
-      // The passenger waits at the road intersection set when the job started.
-      const px = job.pickupX; const py = job.pickupY;
-      state.waypoint = { x: px, y: py, label: 'Passenger' };
-      if (p.inCar !== null && dist(pp.x, pp.y, px, py) < 90) {
-        job.phase = 'dropoff';
+      if (S.inCar && dist(p.x, p.y, job.pickup.x, job.pickup.y) <= JOB_RADIUS.taxiPickup) {
+        job.phase = 'drop';
+        job.pickedUp = true;
         job.passenger = true;
-        state.waypoint = { x: PLACES[job.dest].x, y: PLACES[job.dest].y, label: `Drop off — ${PLACES[job.dest].label}` };
-        addToast(state, `Passenger aboard — take them to ${PLACES[job.dest].label}.`);
+        job.hasPassenger = true;
+        S.waypoint = { x: job.destination.x, y: job.destination.y, label: job.destination.name };
+        S.toast = { text: `Passenger aboard — take them to ${job.destination.name}`, until: S.time + 4 };
+        playPickup();
       }
-    } else if (dist(pp.x, pp.y, PLACES[job.dest].x, PLACES[job.dest].y) < 120) {
-      finishJob(state, audio);
+    } else if (dist(p.x, p.y, job.destination.x, job.destination.y) <= JOB_RADIUS.taxiDrop) {
+      endJob(true);
     }
   } else if (job.type === 'delivery') {
     if (job.phase === 'pickup') {
-      state.waypoint = { x: PLACES[job.from].x, y: PLACES[job.from].y, label: `Pickup — ${PLACES[job.from].label}` };
-      if (dist(pp.x, pp.y, PLACES[job.from].x, PLACES[job.from].y) < 100) {
-        job.phase = 'dropoff';
-        sfx.pickup(audio);
-        state.waypoint = { x: PLACES[job.dest].x, y: PLACES[job.dest].y, label: `Drop off — ${PLACES[job.dest].label}` };
-        addToast(state, `Parcel picked up — deliver it to ${PLACES[job.dest].label}.`);
+      if (dist(p.x, p.y, job.pickup.x, job.pickup.y) <= JOB_RADIUS.deliveryPickup) {
+        job.phase = 'drop';
+        job.pickedUp = true;
+        job.hasParcel = true;
+        S.waypoint = { x: job.destination.x, y: job.destination.y, label: job.destination.name };
+        S.toast = { text: `Parcel picked up — deliver to ${job.destination.name}`, until: S.time + 4 };
+        playPickup();
       }
-    } else if (dist(pp.x, pp.y, PLACES[job.dest].x, PLACES[job.dest].y) < 100) {
-      finishJob(state, audio);
+    } else if (dist(p.x, p.y, job.destination.x, job.destination.y) <= JOB_RADIUS.deliveryDrop) {
+      endJob(true);
     }
   } else if (job.type === 'bounty') {
-    const target = state.enemies.find((e) => e.bounty);
-    if (!target) {
-      // The marked rival is down.
-      finishJob(state, audio);
+    if (job.target) {
+      S.waypoint = { x: job.target.x, y: job.target.y, label: 'BOUNTY' };
+      if (job.target.health <= 0 || !S.enemies.includes(job.target)) endJob(true);
     } else {
-      state.waypoint = { x: target.x, y: target.y, label: 'Bounty target' };
+      endJob(true);
     }
   }
-}
-
-// A job's waypoint overrides the story waypoint while the job runs; the
-// story waypoint is restored when the job ends (see finishJob / failJob).
-export function jobObjective(state) {
-  const job = state.job;
-  if (!job) return null;
-  if (job.type === 'taxi') return job.phase === 'pickup' ? 'JOB: pick up the passenger (in a car)' : `JOB: drive passenger to ${PLACES[job.dest].label} — ${Math.ceil(job.timer)}s`;
-  if (job.type === 'delivery') return job.phase === 'pickup' ? `JOB: pick up parcel at ${PLACES[job.from].label}` : `JOB: deliver to ${PLACES[job.dest].label} — ${Math.ceil(job.timer)}s`;
-  return `JOB: take down the bounty target — ${Math.ceil(job.timer)}s`;
 }

@@ -1,137 +1,153 @@
-// On-foot player: WASD movement, mouse aim, E to interact / enter cars,
-// Space or click to shoot (handled in combat.js), building collision.
-// Movement is checked axis by axis, so sliding along a building wall still
-// works when the other axis is blocked.
-import { PLAYER } from './config.js';
-import { hitBuilding, inWorld, dist, addToast, addWanted, PLACES } from './world.js';
-import { isDown, wasPressed } from './input.js';
-import { sfx } from './audio.js';
-import { shopFor } from './upgrades.js';
+// Solmar Bay — Danny on foot: walking, aiming, and the E key's
+// interactions with the world. Driving itself lives in vehicles.js;
+// this module only decides what E does when Danny is on foot.
 
-function tryMove(state, dx, dy) {
-  const p = state.player;
-  const nx = p.x + dx;
-  const ny = p.y + dy;
-  if (inWorld(nx, p.y) && !hitBuilding(state, nx, p.y, PLAYER.radius)) p.x = nx;
-  if (inWorld(p.x, ny) && !hitBuilding(state, p.x, ny, PLAYER.radius)) p.y = ny;
+import { S, clamp, dist, angleTo, moveCircle, clearOfBuildings } from './world.js';
+import { PLAYER, WORLD_W, WORLD_H } from './config.js';
+import { INPUT, keyHeld, keyPressed } from './input.js';
+import { enterCar, exitCar, nearestCar } from './vehicles.js';
+import { openShopAt, nearestShopDist } from './shops.js';
+import { collectMissionPackage, grabHarbourCash } from './missions.js';
+import { playPickup } from './audio.js';
+
+// The mouse position in world coordinates, for aiming.
+export function mouseWorld() {
+  const w = S.viewW || 1280;
+  const h = S.viewH || 800;
+  return {
+    x: S.camera.x + (INPUT.mouse.x - w / 2),
+    y: S.camera.y + (INPUT.mouse.y - h / 2),
+  };
 }
 
-function nearestCar(state, maxD) {
-  let best = null; let bestD = maxD;
-  for (const c of state.cars) {
-    if (c.police) continue;
-    const d = dist(state.player.x, state.player.y, c.x, c.y);
-    if (d < bestD) { bestD = d; best = c; }
-  }
-  return best;
-}
-
-export function updatePlayer(state, dt, input, audio) {
-  const p = state.player;
-  if (p.inCar !== null) return; // driving is handled in vehicles.js
-
-  // Aim at the mouse.
-  p.angle = Math.atan2(input.aimY - p.y, input.aimX - p.x);
-
-  let mx = 0; let my = 0;
-  if (isDown(input, 'KeyW', 'ArrowUp')) my -= 1;
-  if (isDown(input, 'KeyS', 'ArrowDown')) my += 1;
-  if (isDown(input, 'KeyA', 'ArrowLeft')) mx -= 1;
-  if (isDown(input, 'KeyD', 'ArrowRight')) mx += 1;
-  if (mx !== 0 || my !== 0) {
+// Walk Danny with WASD or the arrow keys, sliding along walls.
+export function updatePlayerOnFoot(dt) {
+  const p = S.player;
+  let mx = 0;
+  let my = 0;
+  if (keyHeld('KeyW') || keyHeld('ArrowUp')) my -= 1;
+  if (keyHeld('KeyS') || keyHeld('ArrowDown')) my += 1;
+  if (keyHeld('KeyA') || keyHeld('ArrowLeft')) mx -= 1;
+  if (keyHeld('KeyD') || keyHeld('ArrowRight')) mx += 1;
+  p.moving = mx !== 0 || my !== 0;
+  if (p.moving) {
     const len = Math.hypot(mx, my);
-    const sp = PLAYER.speed * dt;
-    tryMove(state, (mx / len) * sp, (my / len) * sp);
-    p.speed = PLAYER.speed;
-  } else p.speed = 0;
-
-  // E: interact — mission waypoint / package / hidden package / car.
-  if (wasPressed(input, 'KeyE')) {
-    if (tryInteract(state, audio)) return;
-    const car = nearestCar(state, 70);
-    if (car) {
-      enterCar(state, car, audio);
-      // Consume the press: without this, vehicles.js would see the same
-      // E this frame and exit the car again immediately.
-      input.pressed.delete('KeyE');
-    }
+    mx /= len;
+    my /= len;
+    const pos = moveCircle(p.x, p.y, mx * PLAYER.walkSpeed * dt, my * PLAYER.walkSpeed * dt, p.radius);
+    p.x = pos.x;
+    p.y = pos.y;
+    p.speed = PLAYER.walkSpeed;
+  } else {
+    p.speed = 0;
   }
+  // Aim at the mouse.
+  const m = mouseWorld();
+  if (dist(p.x, p.y, m.x, m.y) > 4) p.angle = angleTo(p.x, p.y, m.x, m.y);
+  if (p.invuln > 0) p.invuln = Math.max(0, p.invuln - dt);
+  if (p.fireCooldown > 0) p.fireCooldown = Math.max(0, p.fireCooldown - dt);
 }
 
-export function tryInteract(state, audio) {
-  const p = state.player;
-  // Shopkeepers first: walk up to Gus, Lena or Dr. Ana and press E to shop.
-  for (const npc of state.npcs) {
-    if (dist(p.x, p.y, npc.x, npc.y) < 80) {
-      const shop = shopFor(state, npc.shop);
-      state.shop = { shopId: npc.shop, sel: 0 };
-      state.dialogue = { lines: [shop.line, `${shop.name} — press 1-${shop.items.length} to buy, E to leave.`], idx: 0, onDone: null };
-      sfx.click(audio);
+// The E key while Danny is on foot, in the spec's priority order:
+// a shopkeeper, a mission package, a hidden package, the harbour
+// cash, and finally a nearby car.
+export function interact() {
+  const p = S.player;
+  if (collectMissionPackage(p.x, p.y)) return;
+  if (collectHiddenPackage(p.x, p.y)) return;
+  if (grabHarbourCash(p.x, p.y)) return;
+  // A car and a shop keeper can both be in reach (a car parked by a
+  // shop front): use whichever is closer instead of always the shop,
+  // or E would open the shop when the player meant to drive away.
+  // A taxi fare needs a car: while the passenger is waiting, getting
+  // into the nearest car beats opening a shop, or the fare is lost
+  // while the shopkeeper talks and the passenger gives up. The fare
+  // car is looked for over a wider reach, because a moving traffic
+  // car keeps driving away between the player reaching it and the key
+  // press landing, and only a car in reach can be caught at all.
+  const needsCar = S.job && S.job.type === 'taxi' && S.job.phase === 'pickup';
+  const fareCar = needsCar ? nearestCar(p.x, p.y, 160) : null;
+  if (needsCar && fareCar !== null && fareCar !== undefined) { enterCar(fareCar); return; }
+  const car = nearestCar(p.x, p.y, PLAYER.enterCarRange);
+  const hasCar = car !== null && car !== undefined;
+  const carDist = hasCar ? dist(p.x, p.y, S.cars[car].x, S.cars[car].y) : Infinity;
+  const shopDist = nearestShopDist(p.x, p.y);
+  if (hasCar && carDist <= shopDist) { enterCar(car); return; }
+  if (openShopAt(p.x, p.y)) return;
+  if (hasCar) enterCar(car);
+}
+
+function collectHiddenPackage(x, y) {
+  for (const pack of S.packages) {
+    if (pack.found) continue;
+    if (dist(x, y, pack.x, pack.y) <= PLAYER.hiddenRange) {
+      pack.found = true;
+      S.money += 50;
+      S.moneyEarned += 50;
+      const found = S.packages.filter((q) => q.found).length;
+      S.toast = { text: `Hidden package found — ${found} of 12 ($50)`, until: S.time + 4 };
+      playPickup();
       return true;
     }
-  }
-  // Mission waypoint arrival is handled by missions.js; here we handle pickups.
-  for (const pkg of state.missionPackages) {
-    if (!pkg.taken && dist(p.x, p.y, pkg.x, pkg.y) < 70) {
-      pkg.taken = true;
-      state.packagesCollected += 1;
-      state.player.money += 0; // pay comes at mission completion
-      sfx.pickup(audio);
-      addToast(state, `Package ${state.packagesCollected}/3 collected!`);
-      return true;
-    }
-  }
-  for (const hp of state.hiddenPackages) {
-    if (!hp.found && dist(p.x, p.y, hp.x, hp.y) < 60) {
-      hp.found = true;
-      state.hiddenFound += 1;
-      state.player.money += 50;
-      sfx.pickup(audio);
-      addToast(state, `Hidden package found! +$50 (${state.hiddenFound}/12)`);
-      return true;
-    }
-  }
-  // Harbour cash (mission 5).
-  if (state.missionIndex === 4 && state.missionState.phase === 'grab'
-    && dist(p.x, p.y, PLACES.harbour.x, PLACES.harbour.y) < 80) {
-    state.missionState.phase = 'escape';
-    state.waypoint = { x: PLACES.hideout.x, y: PLACES.hideout.y, label: PLACES.hideout.label };
-    addWanted(state, 4);
-    sfx.pickup(audio);
-    addToast(state, 'Cash grabbed! Get to the Hideout — the whole force is coming!');
-    return true;
   }
   return false;
 }
 
-export function enterCar(state, car, audio) {
-  const p = state.player;
-  p.inCar = car.id;
-  car.parked = false;
-  car.traffic = false;
-  car.driver = true;
-  if (car.getaway) {
-    // stealing the getaway car is the job, not a crime
-  } else if (!car.stolen) {
-    car.stolen = true;
-    state.stats.carsStolen += 1;
-    addWanted(state, 1);
-    addToast(state, 'Car stolen! The cops noticed.');
+// The E key while driving: step out 34 units to the side of the car,
+// on the side that is not inside a building.
+export function exitCarToSide() {
+  const car = S.cars[S.carIndex];
+  if (!car) return;
+  const p = S.player;
+  for (const side of [1, -1]) {
+    const a = car.angle + (side * Math.PI) / 2;
+    const x = car.x + Math.cos(a) * 34;
+    const y = car.y + Math.sin(a) * 34;
+    if (x < 20 || x > WORLD_W - 20 || y < 20 || y > WORLD_H - 20) continue;
+    if (!clearOfBuildings(x, y, p.radius + 2)) continue;
+    p.x = x;
+    p.y = y;
+    exitCar();
+    return;
   }
-  p.x = car.x; p.y = car.y;
-  sfx.click(audio);
+  // Both sides blocked: step out behind the car instead.
+  p.x = car.x - Math.cos(car.angle) * 34;
+  p.y = car.y - Math.sin(car.angle) * 34;
+  exitCar();
 }
 
-export function exitCar(state, audio) {
-  const p = state.player;
-  if (p.inCar === null) return;
-  const car = state.cars[p.inCar];
-  p.inCar = null;
-  // Step out to the side of the car.
-  const sx = car.x + Math.cos(car.angle + Math.PI / 2) * 34;
-  const sy = car.y + Math.sin(car.angle + Math.PI / 2) * 34;
-  if (!hitBuilding(state, sx, sy, PLAYER.radius)) { p.x = sx; p.y = sy; }
-  else { p.x = car.x - Math.cos(car.angle + Math.PI / 2) * 34; p.y = car.y - Math.sin(car.angle + Math.PI / 2) * 34; }
-  car.speed = 0;
-  sfx.click(audio);
+export function updatePlayer(dt) {
+  if (S.inCar) {
+    const car = S.cars[S.carIndex];
+    if (car) {
+      // A teleported player drags the car with them: if the player's
+      // position jumps away from the car, the car comes along instead
+      // of the player being pulled back to it. The jump has to be far
+      // bigger than one slice of driving (top speed covers under 9
+      // units a slice), or ordinary driving would trip it every time
+      // the car outran the player's last synced spot and the speed
+      // would keep resetting to zero.
+      if (dist(S.player.x, S.player.y, car.x, car.y) > 40) {
+        car.x = S.player.x;
+        car.y = S.player.y;
+        car.angle = S.player.angle;
+        car.speed = 0;
+      }
+      S.player.x = car.x;
+      S.player.y = car.y;
+      S.player.angle = car.angle;
+      S.player.speed = Math.abs(car.speed);
+    }
+    if (S.player.invuln > 0) S.player.invuln = Math.max(0, S.player.invuln - dt);
+    if (S.player.fireCooldown > 0) S.player.fireCooldown = Math.max(0, S.player.fireCooldown - dt);
+    return;
+  }
+  updatePlayerOnFoot(dt);
+  if (keyPressed('KeyE')) interact();
+}
+
+export function clampPlayerToWorld() {
+  const p = S.player;
+  p.x = clamp(p.x, 20 + p.radius, WORLD_W - 20 - p.radius);
+  p.y = clamp(p.y, 20 + p.radius, WORLD_H - 20 - p.radius);
 }
